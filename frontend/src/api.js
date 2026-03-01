@@ -1,5 +1,6 @@
 // ─── API helper ───
 const LOCAL_DEFAULT_BASE = 'http://127.0.0.1:8000/api/v1';
+const CLOUD_DEFAULT_BASE = 'https://pulse-ai-b601.onrender.com/api/v1';
 
 function normalizeBase(url) {
   return String(url || '').trim().replace(/\/+$/, '');
@@ -30,7 +31,7 @@ export function getBaseUrl() {
   }
 
   if (ENV_BASE) return ENV_BASE;
-  return LOCAL_DEFAULT_BASE;
+  return isLocalRuntime ? LOCAL_DEFAULT_BASE : CLOUD_DEFAULT_BASE;
 }
 
 export function setBaseUrl(url) {
