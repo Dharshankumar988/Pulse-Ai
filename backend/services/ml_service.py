@@ -3,16 +3,46 @@ import threading
 from io import BytesIO
 from pathlib import Path
 
-import cv2
-import numpy as np
-import torch
 from PIL import Image
-from torchvision import transforms
-from torchvision.models import efficientnet_b0
-from ultralytics import YOLO
 
 from config.settings import settings
 from models.ml_models import MLTask
+
+# Lazy imports for heavy ML libs — loaded on first use to reduce startup memory
+_torch = None
+_cv2 = None
+_np = None
+_transforms = None
+_efficientnet_b0 = None
+_YOLO = None
+_SKIN_TRANSFORM = None
+
+
+def _ensure_ml_imports():
+    global _torch, _cv2, _np, _transforms, _efficientnet_b0, _YOLO, _SKIN_TRANSFORM
+    if _torch is not None:
+        return
+    import torch as _t
+    import cv2 as _c
+    import numpy as _n
+    from torchvision import transforms as _tr
+    from torchvision.models import efficientnet_b0 as _eb0
+    from ultralytics import YOLO as _Y
+
+    _torch = _t
+    _cv2 = _c
+    _np = _n
+    _transforms = _tr
+    _efficientnet_b0 = _eb0
+    _YOLO = _Y
+    _SKIN_TRANSFORM = _tr.Compose(
+        [
+            _tr.Resize(256),
+            _tr.CenterCrop(224),
+            _tr.ToTensor(),
+            _tr.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
 
 
 class MLServiceError(RuntimeError):
@@ -35,14 +65,6 @@ _DEFAULT_SKIN_CLASS_MAP = {
 }
 
 _MODEL_DIR = Path(settings.models_directory)
-_SKIN_TRANSFORM = transforms.Compose(
-    [
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ]
-)
 
 _MODEL_CONFIG = {
     "fracture": {
@@ -185,14 +207,15 @@ def _is_unknown_label(label: str | None) -> bool:
 
 
 def _load_skin_model(path: str):
+    _ensure_ml_imports()
     try:
-        scripted = torch.jit.load(path, map_location="cpu")
+        scripted = _torch.jit.load(path, map_location="cpu")
         scripted.eval()
         return scripted
     except Exception:
         pass
 
-    raw = torch.load(path, map_location="cpu")
+    raw = _torch.load(path, map_location="cpu")
     state_dict = raw.get("state_dict", raw) if isinstance(raw, dict) else raw
     if not isinstance(state_dict, dict):
         raise MLServiceError("skin_model.pt is not a valid state_dict or TorchScript model")
@@ -203,9 +226,9 @@ def _load_skin_model(path: str):
         raise MLServiceError("Unable to infer class count from skin_model.pt")
 
     num_classes = int(classifier_weight.shape[0])
-    model = efficientnet_b0(weights=None)
+    model = _efficientnet_b0(weights=None)
     in_features = model.classifier[1].in_features
-    model.classifier[1] = torch.nn.Linear(in_features, num_classes)
+    model.classifier[1] = _torch.nn.Linear(in_features, num_classes)
     model.load_state_dict(state_dict, strict=False)
     model.eval()
     return model
@@ -228,12 +251,13 @@ def _resolve_model(task: MLTask):
         if cached is not None:
             return cached, config
 
+        _ensure_ml_imports()
         if config["type"] == "yolo":
-            model = YOLO(model_path)
+            model = _YOLO(model_path)
         elif task == "skin_classification":
             model = _load_skin_model(model_path)
         else:
-            model = torch.jit.load(model_path, map_location="cpu")
+            model = _torch.jit.load(model_path, map_location="cpu")
             model.eval()
 
         _MODEL_CACHE[task] = model
@@ -282,8 +306,9 @@ def build_error_response(task: MLTask, error: str) -> dict:
     )
 
 
-def _run_yolo_inference(model: YOLO, task: MLTask, image: Image.Image, confidence: float) -> dict:
-    with torch.inference_mode():
+def _run_yolo_inference(model, task: MLTask, image: Image.Image, confidence: float) -> dict:
+    _ensure_ml_imports()
+    with _torch.inference_mode():
         results = model.predict(source=image, conf=confidence, device="cpu", verbose=False)
 
     if not results:
@@ -324,14 +349,16 @@ def _run_yolo_inference(model: YOLO, task: MLTask, image: Image.Image, confidenc
     )
 
 
-def _image_to_tensor(image: Image.Image) -> torch.Tensor:
+def _image_to_tensor(image: Image.Image):
+    _ensure_ml_imports()
     return _SKIN_TRANSFORM(image.convert("RGB")).unsqueeze(0)
 
 
 def _run_classifier_inference(model, task: MLTask, image: Image.Image, top_k: int) -> dict:
     input_tensor = _image_to_tensor(image)
 
-    with torch.inference_mode():
+    _ensure_ml_imports()
+    with _torch.inference_mode():
         outputs = model(input_tensor)
 
     if isinstance(outputs, (list, tuple)):
@@ -340,11 +367,11 @@ def _run_classifier_inference(model, task: MLTask, image: Image.Image, top_k: in
     if outputs.dim() == 1:
         outputs = outputs.unsqueeze(0)
 
-    probabilities = torch.softmax(outputs, dim=1)[0]
+    probabilities = _torch.softmax(outputs, dim=1)[0]
     total_classes = int(probabilities.shape[0])
     resolved_top_k = max(1, min(top_k, total_classes))
 
-    confidence_values, class_indices = torch.topk(probabilities, k=resolved_top_k)
+    confidence_values, class_indices = _torch.topk(probabilities, k=resolved_top_k)
     config = _MODEL_CONFIG[task]
     labels_path = config.get("labels", lambda: "")()
     labels = _load_labels(labels_path)
@@ -407,8 +434,9 @@ def get_model_load_status() -> dict:
 
 
 def detect_image_color_mode(image_bytes: bytes) -> str:
-    np_buffer = np.frombuffer(image_bytes, dtype=np.uint8)
-    decoded = cv2.imdecode(np_buffer, cv2.IMREAD_UNCHANGED)
+    _ensure_ml_imports()
+    np_buffer = _np.frombuffer(image_bytes, dtype=_np.uint8)
+    decoded = _cv2.imdecode(np_buffer, _cv2.IMREAD_UNCHANGED)
     if decoded is None:
         raise MLServiceError("Unable to decode image with OpenCV")
 
@@ -419,10 +447,10 @@ def detect_image_color_mode(image_bytes: bytes) -> str:
         return "grayscale"
 
     if len(decoded.shape) == 3 and decoded.shape[2] >= 3:
-        b = decoded[:, :, 0].astype(np.float32)
-        g = decoded[:, :, 1].astype(np.float32)
-        r = decoded[:, :, 2].astype(np.float32)
-        diff_score = float(np.mean(np.abs(r - g) + np.abs(g - b) + np.abs(r - b)))
+        b = decoded[:, :, 0].astype(_np.float32)
+        g = decoded[:, :, 1].astype(_np.float32)
+        r = decoded[:, :, 2].astype(_np.float32)
+        diff_score = float(_np.mean(_np.abs(r - g) + _np.abs(g - b) + _np.abs(r - b)))
         if diff_score < 8.0:
             return "grayscale"
         return "color"

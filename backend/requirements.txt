@@ -3,12 +3,14 @@ uvicorn[standard]
 pillow
 supabase
 python-dotenv
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch
-ultralytics
 torchvision
+ultralytics
 opencv-python-headless
 pydantic
 python-multipart
 email-validator
 httpx
 PyJWT
+groq
