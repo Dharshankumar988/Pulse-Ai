@@ -1,41 +1,18 @@
 // ─── API helper ───
-const LOCAL_DEFAULT_BASE = 'http://127.0.0.1:8000/api/v1';
-const CLOUD_DEFAULT_BASE = 'https://pulse-ai-b601.onrender.com/api/v1';
+const CLOUD_BASE = 'https://pulse-ai-b601.onrender.com/api/v1';
+const LOCAL_BASE = 'http://127.0.0.1:8000/api/v1';
 
-function normalizeBase(url) {
-  return String(url || '').trim().replace(/\/+$/, '');
+function isLocal() {
+  try { return ['localhost', '127.0.0.1'].includes(window.location.hostname); }
+  catch { return false; }
 }
-
-function ensureApiPrefix(url) {
-  const normalized = normalizeBase(url);
-  if (!normalized) return '';
-  return normalized.endsWith('/api/v1') ? normalized : `${normalized}/api/v1`;
-}
-
-function isLocalHost(hostname) {
-  return hostname === 'localhost' || hostname === '127.0.0.1';
-}
-
-const ENV_BASE = ensureApiPrefix(import.meta.env.VITE_API_BASE_URL || '');
 
 export function getBaseUrl() {
-  const stored = ensureApiPrefix(localStorage.getItem('pulseApiBase'));
-  const isBrowser = typeof window !== 'undefined';
-  const isLocalRuntime = isBrowser ? isLocalHost(window.location.hostname) : false;
-
-  if (stored) {
-    const isInsecureHttp = stored.startsWith('http://');
-    if (!(isInsecureHttp && !isLocalRuntime)) {
-      return stored;
-    }
-  }
-
-  if (ENV_BASE) return ENV_BASE;
-  return isLocalRuntime ? LOCAL_DEFAULT_BASE : CLOUD_DEFAULT_BASE;
+  return isLocal() ? LOCAL_BASE : CLOUD_BASE;
 }
 
-export function setBaseUrl(url) {
-  localStorage.setItem('pulseApiBase', ensureApiPrefix(url));
+export function setBaseUrl() {
+  // no-op, kept for backward compat
 }
 
 function parseApiError(data, statusText) {
