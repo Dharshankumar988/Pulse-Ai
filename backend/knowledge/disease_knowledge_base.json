@@ -1,0 +1,77 @@
+{
+  "fracture": {
+    "drugs": [
+      "acetaminophen",
+      "ibuprofen"
+    ],
+    "procedures": [
+      "immobilization",
+      "cast or splint application",
+      "orthopedic evaluation"
+    ],
+    "tests": [
+      "x-ray",
+      "ct scan (if complex fracture suspected)"
+    ]
+  },
+  "tumor": {
+    "drugs": [
+      "ondansetron (supportive care)",
+      "dexamethasone (per specialist guidance)"
+    ],
+    "procedures": [
+      "oncology consultation",
+      "biopsy planning",
+      "multidisciplinary tumor board review"
+    ],
+    "tests": [
+      "mri",
+      "ct scan",
+      "histopathology"
+    ]
+  },
+  "kidney_stone": {
+    "drugs": [
+      "ibuprofen",
+      "tamsulosin"
+    ],
+    "procedures": [
+      "hydration protocol",
+      "urology consultation",
+      "lithotripsy assessment"
+    ],
+    "tests": [
+      "urinalysis",
+      "renal ultrasound",
+      "non-contrast ct kub"
+    ]
+  },
+  "skin_condition": {
+    "drugs": [
+      "cetirizine",
+      "hydrocortisone topical"
+    ],
+    "procedures": [
+      "dermatology consultation",
+      "lesion documentation"
+    ],
+    "tests": [
+      "dermoscopy",
+      "skin scraping or biopsy if indicated"
+    ]
+  },
+  "general_non_specific_finding": {
+    "drugs": [
+      "acetaminophen (if no contraindication)",
+      "ibuprofen (if no contraindication)"
+    ],
+    "procedures": [
+      "clinical reassessment",
+      "specialist referral as needed"
+    ],
+    "tests": [
+      "targeted imaging",
+      "basic laboratory panel"
+    ]
+  }
+}

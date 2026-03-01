@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+pillow
+supabase
+python-dotenv
+torch
+ultralytics
+torchvision
+opencv-python-headless
+pydantic
+python-multipart
+email-validator
+httpx
+PyJWT
