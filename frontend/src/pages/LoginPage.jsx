@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../AuthContext';
 import { api } from '../api';
 import { Input, Btn, StatusMsg } from '../components/ui';
-import { Activity, LogIn, UserPlus, CheckCircle } from 'lucide-react';
+import { Activity, LogIn, UserPlus, CheckCircle, Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -15,6 +15,7 @@ export default function LoginPage() {
   const [phone, setPhone] = useState('');
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleLogin = async () => {
     setLoading(true);
@@ -124,8 +125,26 @@ export default function LoginPage() {
           {/* Common fields */}
           <Input label="Email" type="email" placeholder="doctor@hospital.com" value={email}
             onChange={e => setEmail(e.target.value)} />
-          <Input label="Password" type="password" placeholder="••••••••" value={password}
-            onChange={e => setPassword(e.target.value)} />
+          <label className="flex flex-col gap-1.5 text-sm text-slate-300">
+            Password
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                placeholder="••••••••"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                className="glass-input rounded-xl px-3.5 py-2.5 pr-11 text-sm text-white placeholder:text-slate-500 transition-all w-full"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(prev => !prev)}
+                className="absolute inset-y-0 right-0 px-3 flex items-center text-slate-400 hover:text-white transition"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </label>
 
           {/* Register-only fields */}
           {mode === 'register' && (

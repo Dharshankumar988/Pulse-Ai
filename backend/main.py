@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-
 from config.settings import settings
 from middleware.cors import setup_cors
 from routers import api_router
