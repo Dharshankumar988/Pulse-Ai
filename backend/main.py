@@ -1,21 +1,9 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-import os
+
 from config.settings import settings
 from middleware.cors import setup_cors
 from routers import api_router
-origins = [
-    "http://localhost:5173",
-    "https://<your-vercel-app>.vercel.app",
-]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
