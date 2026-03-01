@@ -1,12 +1,40 @@
 // ─── API helper ───
-const DEFAULT_BASE = 'http://127.0.0.1:8000/api/v1';
+const LOCAL_DEFAULT_BASE = 'http://127.0.0.1:8000/api/v1';
+
+function normalizeBase(url) {
+  return String(url || '').trim().replace(/\/+$/, '');
+}
+
+function ensureApiPrefix(url) {
+  const normalized = normalizeBase(url);
+  if (!normalized) return '';
+  return normalized.endsWith('/api/v1') ? normalized : `${normalized}/api/v1`;
+}
+
+function isLocalHost(hostname) {
+  return hostname === 'localhost' || hostname === '127.0.0.1';
+}
+
+const ENV_BASE = ensureApiPrefix(import.meta.env.VITE_API_BASE_URL || '');
 
 export function getBaseUrl() {
-  return localStorage.getItem('pulseApiBase') || DEFAULT_BASE;
+  const stored = ensureApiPrefix(localStorage.getItem('pulseApiBase'));
+  const isBrowser = typeof window !== 'undefined';
+  const isLocalRuntime = isBrowser ? isLocalHost(window.location.hostname) : false;
+
+  if (stored) {
+    const isInsecureHttp = stored.startsWith('http://');
+    if (!(isInsecureHttp && !isLocalRuntime)) {
+      return stored;
+    }
+  }
+
+  if (ENV_BASE) return ENV_BASE;
+  return LOCAL_DEFAULT_BASE;
 }
 
 export function setBaseUrl(url) {
-  localStorage.setItem('pulseApiBase', url);
+  localStorage.setItem('pulseApiBase', ensureApiPrefix(url));
 }
 
 function parseApiError(data, statusText) {
