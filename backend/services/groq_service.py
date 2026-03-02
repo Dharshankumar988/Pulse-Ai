@@ -1,5 +1,6 @@
 import json
 import base64
+import re
 import time
 
 import httpx
@@ -13,6 +14,7 @@ class GroqServiceError(RuntimeError):
 
 _SYMPTOM_CACHE: dict[str, tuple[float, dict]] = {}
 _UNCERTAINTY_CACHE: dict[str, tuple[float, dict]] = {}
+_CHAT_PROMPT_VERSION = "v3"
 
 
 def _safe_float(value, default: float = 0.0) -> float:
@@ -57,8 +59,8 @@ def _default_symptom_output(symptoms: str) -> dict:
         "risk": risk,
         "missing_inputs": [],
         "follow_up_questions": [
-            "How long have these symptoms been present?",
-            "Are the symptoms getting better, worse, or unchanged?",
+            "What is the patient symptom timeline and progression?",
+            "Any red flags or objective findings that change risk stratification?",
         ],
         "clinical_reasoning": "Rule-based fallback reasoning was applied from symptom keywords.",
         "summary": "Generated using rule-based fallback because Groq API is unavailable.",
@@ -139,8 +141,8 @@ async def analyze_image_with_groq(image_bytes: bytes, symptoms: str | None, imag
         "severity": "moderate",
         "risk": "medium",
         "follow_up_questions": [
-            "Can you share symptom duration and progression?",
-            "Any fever, bleeding, or severe pain associated with this finding?",
+            "Provide patient symptom duration and progression correlated with image findings.",
+            "Document associated red flags (fever, bleeding, severe pain, rapid progression).",
         ],
         "clinical_reasoning": "Fallback used because Groq image analysis was unavailable.",
         "summary": "Image triage used fallback output.",
@@ -155,19 +157,19 @@ async def analyze_image_with_groq(image_bytes: bytes, symptoms: str | None, imag
     context_text = json.dumps(image_context or {}, default=str)
 
     prompt = (
-        "You are Pulse, a medical triage assistant. Analyze the provided medical image and optional symptoms. "
+        "You are Pulse, a medical triage assistant for physician users. Analyze the provided medical image and optional symptoms. "
         "Return ONLY valid JSON using this schema: "
         "{"
         "\"disease\": string,"
         "\"probability\": number(0-1),"
         "\"severity\": \"low\"|\"moderate\"|\"high\"|\"critical\","
         "\"risk\": \"low\"|\"medium\"|\"high\","
-        "\"follow_up_questions\": string[] (max 4),"
+        "\"follow_up_questions\": string[] (max 4, phrased for clinicians),"
         "\"clinical_reasoning\": string (max 70 words),"
         "\"summary\": string (max 30 words),"
         "\"source\": \"groq_vision\""
         "}."
-        f"\nSymptoms: {symptoms or 'not provided'}"
+        f"\nSymptoms/clinical context: {symptoms or 'not provided'}"
         f"\nImage context: {context_text}"
     )
 
@@ -324,7 +326,7 @@ async def analyze_symptoms_with_groq(symptoms: str) -> dict:
             "severity": "low",
             "risk": "low",
             "missing_inputs": ["symptoms"],
-            "follow_up_questions": ["Can you describe your key symptoms and when they started?"],
+            "follow_up_questions": ["Provide key patient symptoms with onset, duration, and progression."],
             "clinical_reasoning": "No symptom content was supplied.",
             "summary": "Symptom analysis skipped due to empty input.",
             "source": "empty-input",
@@ -341,7 +343,7 @@ async def analyze_symptoms_with_groq(symptoms: str) -> dict:
         return fallback
 
     prompt = (
-        "You are Pulse, a medical triage assistant. Given symptoms, return ONLY valid JSON and no markdown. "
+        "You are Pulse, a medical triage assistant for physician users. Given symptoms, return ONLY valid JSON and no markdown. "
         "Do NOT provide medications, drugs, dosages, procedures, or test recommendations. "
         "Only provide diagnostic triage fields defined below. "
         "Use this exact schema: "
@@ -351,7 +353,7 @@ async def analyze_symptoms_with_groq(symptoms: str) -> dict:
         "\"severity\": \"low\"|\"moderate\"|\"high\"|\"critical\","
         "\"risk\": \"low\"|\"medium\"|\"high\","
         "\"missing_inputs\": string[],"
-        "\"follow_up_questions\": string[] (max 4 concise questions),"
+        "\"follow_up_questions\": string[] (max 4 concise clinician-facing questions),"
         "\"clinical_reasoning\": string (max 70 words),"
         "\"summary\": string (max 30 words),"
         "\"source\": \"groq\""
@@ -413,8 +415,8 @@ async def analyze_uncertain_image_with_groq(symptoms: str | None, image_context:
         "risk": "medium",
         "uncertainty": 0.75,
         "follow_up_questions": [
-            "Can you provide a clearer image from another angle or modality?",
-            "What are the key associated symptoms and their duration?",
+            "Provide a higher-quality image from an alternate angle/modality for clinical correlation.",
+            "List key associated symptoms, duration, and objective exam findings.",
         ],
         "clinical_reasoning": "Image confidence/routing was insufficient; produced conservative general analysis.",
         "summary": "General analysis due to uncertain image interpretation.",
@@ -427,7 +429,7 @@ async def analyze_uncertain_image_with_groq(symptoms: str | None, image_context:
         return fallback_output
 
     prompt = (
-        "You are Pulse, a medical triage assistant. An image analysis is uncertain. "
+        "You are Pulse, a medical triage assistant for physician users. An image analysis is uncertain. "
         "Do NOT provide medications, drugs, dosages, procedures, or test recommendations. "
         "Only provide uncertainty-aware diagnostic triage fields defined below. "
         "Return ONLY valid JSON with exact schema: "
@@ -437,7 +439,7 @@ async def analyze_uncertain_image_with_groq(symptoms: str | None, image_context:
         "\"severity\": \"low\"|\"moderate\"|\"high\"|\"critical\","
         "\"risk\": \"low\"|\"medium\"|\"high\","
         "\"uncertainty\": number(0-1),"
-        "\"follow_up_questions\": string[] (max 4),"
+        "\"follow_up_questions\": string[] (max 4, clinician-facing),"
         "\"clinical_reasoning\": string (max 70 words),"
         "\"summary\": string (max 30 words),"
         "\"source\": \"groq\""
@@ -515,18 +517,56 @@ def _chat_cache_set(key: str, payload: str) -> None:
     _CHAT_CACHE[key] = (time.time(), payload)
 
 
+def _sanitize_physician_chat_response(text: str) -> str:
+    cleaned = str(text or "").strip()
+    cleaned = re.sub(r"(?i)\bconsult\s+(with\s+)?your\s+(own\s+)?physician\b[^.?!]*[.?!]?", "", cleaned)
+    cleaned = re.sub(r"(?i)\bthis\s+does\s+not\s+replace\s+medical\s+advice\b[^.?!]*[.?!]?", "", cleaned)
+    cleaned = re.sub(r"(?i)\balways\s+important\s+to\s+consult\s+your\s+physician\b[^.?!]*[.?!]?", "", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+    layperson_markers = [
+        "how can i assist you today",
+        "i'm here to listen",
+        "general advice on maintaining your health",
+        "your healthcare routine",
+        "your unique needs",
+        "what's on your mind today",
+        "if you're not sure where to start",
+        "how have you been feeling",
+        "i hope you're doing well",
+        "your recovery",
+        "daily activities",
+    ]
+
+    lowered = cleaned.lower()
+    has_layperson_tone = any(marker in lowered for marker in layperson_markers)
+
+    if has_layperson_tone:
+        cleaned = (
+            "Colleague, from a senior-clinician standpoint, I would keep this pragmatic: establish the immediate risk tier, "
+            "prioritize focused history and exam findings, and narrow differentials before treatment escalation. "
+            "If pre-test uncertainty is high, use targeted investigations and early specialist input rather than broad empiric changes."
+        )
+
+    access_line = "Access policy: this assistant is intended for verified physicians/clinicians only; non-verified users must not use it."
+    if access_line.lower() not in cleaned.lower():
+        cleaned = f"{access_line}\n\n{cleaned}" if cleaned else access_line
+    return cleaned
+
+
 async def chat_followup_with_groq(user_message: str, conversation_context: str = "") -> str:
     """Generate a conversational paragraph response for follow-up questions (no structured template)."""
     normalized = _normalize_symptoms(user_message)
-    cache_key = f"chat::{normalized}::{_normalize_symptoms(conversation_context)}"
+    cache_key = f"chat::{_CHAT_PROMPT_VERSION}::{normalized}::{_normalize_symptoms(conversation_context)}"
     cached = _chat_cache_get(cache_key)
     if cached is not None:
         return cached
 
     fallback_text = (
-        "I'd be happy to help with your question. Based on what you've shared, "
-        "I recommend discussing this with your treating physician who can review "
-        "your full clinical picture and adjust the plan accordingly."
+        "Access policy: this assistant is intended for verified physicians/clinicians only; non-verified users must not use it. "
+        "Colleague, based on the available details, I would frame this as a conservative, stepwise management decision: "
+        "prioritize clinical reassessment, refine differentials with focused history/exam, and reserve treatment escalation "
+        "until objective findings support it. If uncertainty remains, coordinate specialty input early."
     )
 
     api_key = settings.groq_api_key
@@ -534,13 +574,14 @@ async def chat_followup_with_groq(user_message: str, conversation_context: str =
         return fallback_text
 
     prompt = (
-        "You are Pulse, a helpful and knowledgeable medical assistant. "
-        "The user is asking a follow-up question or having a general medical conversation. "
+        "You are Pulse, a veteran senior physician advising other doctors. "
+        "The user is a clinician asking a follow-up question or having a general clinical discussion. "
         "Respond naturally in 1-3 concise paragraphs. Do NOT use any structured template, "
         "do NOT output JSON, do NOT include fields like Condition/Confidence/Risk. "
-        "Just answer the question helpfully and conversationally as a knowledgeable medical professional would. "
-        "Be clear, practical, and safety-conscious. If recommending a drug, mention it naturally in the response. "
-        "Always remind them to consult their physician for final decisions.\n\n"
+        "Use physician-to-physician tone: concise, practical, differential-oriented, and safety-focused. "
+        "Provide clinical reasoning, risk stratification logic, and stepwise management suggestions suitable for doctors. "
+        "Avoid layperson phrasing. Do not include statements such as 'consult your own physician' or other patient-facing disclaimers. "
+        "Start with a brief access policy line stating this system is for verified physicians/clinicians only and non-verified users must not use it.\n\n"
     )
     if conversation_context:
         prompt += f"Previous conversation context: {conversation_context}\n\n"
@@ -550,7 +591,7 @@ async def chat_followup_with_groq(user_message: str, conversation_context: str =
         "model": settings.groq_model,
         "temperature": 0.3,
         "messages": [
-            {"role": "system", "content": "You are Pulse, a friendly and concise medical assistant. Respond in plain text paragraphs only."},
+            {"role": "system", "content": "You are Pulse, a veteran consultant physician assistant for doctors only. Reply in plain text paragraphs only, with no templates or JSON."},
             {"role": "user", "content": prompt},
         ],
     }
@@ -571,7 +612,7 @@ async def chat_followup_with_groq(user_message: str, conversation_context: str =
             response.raise_for_status()
 
         data = response.json()
-        content = data["choices"][0]["message"]["content"].strip()
+        content = _sanitize_physician_chat_response(data["choices"][0]["message"]["content"])
         _chat_cache_set(cache_key, content)
         return content
     except Exception:

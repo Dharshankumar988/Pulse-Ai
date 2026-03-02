@@ -1,4 +1,5 @@
 from io import BytesIO
+import re
 
 from PIL import Image
 
@@ -28,7 +29,13 @@ def _risk_from_confidence(confidence: float) -> str:
 
 def _build_veteran_doctor_note(condition: str, risk_level: str, symptoms: str) -> str:
     condition_text = str(condition or "a non-specific finding").replace("_", " ").strip()
-    symptoms_text = str(symptoms or "no clear symptom progression provided").strip()
+    symptoms_text = str(symptoms or "").strip()
+    if "current=" in symptoms_text:
+        symptoms_text = symptoms_text.split("current=", 1)[1].strip()
+    symptoms_text = re.sub(r"\b(history|conversation|current)\s*=", "", symptoms_text, flags=re.IGNORECASE)
+    symptoms_text = re.sub(r"\s*\|\s*", " ", symptoms_text).strip()
+    if not symptoms_text:
+        symptoms_text = "no clear symptom progression provided"
     risk_text = str(risk_level or "medium").lower()
 
     return (
@@ -72,6 +79,16 @@ def _is_followup_chat(symptoms_text: str) -> bool:
         return False
 
     lower = current_text.lower().strip()
+    normalized_lower = re.sub(r"[^a-z0-9\s]", " ", lower)
+    normalized_lower = " ".join(normalized_lower.split())
+
+    # Greetings/small-talk should never trigger disease analysis.
+    greeting_tokens = {
+        "hi", "hello", "hey", "hii", "helo", "yo", "sup", "good morning", "good afternoon", "good evening",
+        "thanks", "thank you", "ok", "okay", "alright", "fine",
+    }
+    if normalized_lower in greeting_tokens:
+        return True
 
     # Check if there is conversation context (indicates this is NOT the first message)
     has_conversation_context = "conversation=" in symptoms_text
@@ -84,9 +101,10 @@ def _is_followup_chat(symptoms_text: str) -> bool:
     followup_indicators = [
         # Asking for alternatives
         "alternative", "another drug", "better drug", "different drug", "other drug",
+        "alternate drug", "alternate medicine", "alternate medication",
         "other medication", "another medication", "different medication", "substitute",
         "replacement", "instead of", "switch to", "can you suggest", "can u suggest",
-        "give me a better", "give me another", "recommend another", "what else",
+        "give me a better", "give me another", "give me an alternate", "recommend another", "what else",
         # Asking about something
         "what is", "what are", "what about", "how about", "how does", "how do",
         "how long", "how much", "how often", "can i", "can you", "could you",
@@ -102,7 +120,7 @@ def _is_followup_chat(symptoms_text: str) -> bool:
     ]
 
     for indicator in followup_indicators:
-        if indicator in lower:
+        if indicator in normalized_lower:
             return True
 
     # Short messages with a question mark are likely follow-ups
@@ -123,11 +141,50 @@ def _extract_current_and_context(symptoms_text: str) -> tuple[str, str]:
     return current, context
 
 
+def _looks_like_symptom_report(text: str) -> bool:
+    candidate = (text or "").strip().lower()
+    if not candidate:
+        return False
+
+    normalized = re.sub(r"[^a-z0-9\s]", " ", candidate)
+    normalized = " ".join(normalized.split())
+
+    greeting_tokens = {
+        "hi", "hello", "hey", "hii", "helo", "yo", "sup", "good morning", "good afternoon", "good evening",
+        "thanks", "thank you", "ok", "okay", "alright", "fine",
+    }
+    if normalized in greeting_tokens:
+        return False
+
+    symptom_keywords = {
+        "pain", "fever", "cough", "cold", "headache", "nausea", "vomit", "vomiting", "diarrhea",
+        "dizziness", "fatigue", "weakness", "swelling", "bleeding", "rash", "itching", "breathless",
+        "breathlessness", "shortness", "chest", "abdomen", "stomach", "throat", "ear", "eye", "back",
+        "knee", "ankle", "wrist", "urine", "urinary", "burning", "painful", "injury", "fracture",
+        "lump", "mass", "stone", "infection", "sore", "unconscious", "fainting", "seizure", "bp",
+    }
+
+    report_markers = {"since", "for", "days", "day", "weeks", "week", "months", "month", "started", "worsening", "worse"}
+
+    tokens = set(normalized.split())
+    if tokens & symptom_keywords:
+        return True
+    if tokens & report_markers and len(tokens) >= 3:
+        return True
+    if any(ch.isdigit() for ch in normalized) and ("day" in tokens or "week" in tokens or "month" in tokens):
+        return True
+
+    return False
+
+
 async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | None) -> dict:
     has_image = bool(image_bytes)
     cleaned_symptoms = (symptoms or "").strip()
+    current_message, conversation_context = _extract_current_and_context(cleaned_symptoms)
+    symptom_input = (current_message or cleaned_symptoms).strip()
+    has_symptom_text = bool(symptom_input)
 
-    if not has_image and not cleaned_symptoms:
+    if not has_image and not has_symptom_text:
         return {
             "response_type": "analysis",
             "chat_response": "",
@@ -143,18 +200,17 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
             "needs_image": True,
             "needs_symptoms": True,
             "follow_up_questions": [
-                "Please describe your symptoms and when they started.",
-                "Please upload a relevant medical image if available.",
+                "Provide the patient symptom profile with onset, duration, and progression.",
+                "Upload relevant clinical imaging, if available, for correlation.",
             ],
             "detections": [],
             "image_width": None,
             "image_height": None,
         }
 
-    # --- Follow-up chat detection (text-only, no image) ---
-    if not has_image and _is_followup_chat(cleaned_symptoms):
-        current_message, conversation_context = _extract_current_and_context(cleaned_symptoms)
-        chat_text = await chat_followup_with_groq(current_message, conversation_context)
+    # --- Text-only conversational handling (follow-up or general prompts) ---
+    if not has_image and (_is_followup_chat(cleaned_symptoms) or not _looks_like_symptom_report(symptom_input)):
+        chat_text = await chat_followup_with_groq(symptom_input, conversation_context)
         return {
             "response_type": "chat",
             "chat_response": chat_text,
@@ -188,7 +244,7 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
             image_width, image_height = None, None
 
         try:
-            routed = run_routed_image_analysis(image_bytes, symptoms_hint=cleaned_symptoms)
+            routed = run_routed_image_analysis(image_bytes, symptoms_hint=symptom_input)
             routed_task = str(routed.get("task") or "")
             image_condition = str(routed.get("condition", "unknown_condition"))
             image_confidence = _clip_probability(float(routed.get("confidence", 0.0)))
@@ -219,14 +275,14 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
     symptom_confidence = 0.0
     symptom_risk = ""
     symptom_summary = ""
-    if cleaned_symptoms:
-        symptom_result = await analyze_symptoms_with_groq(cleaned_symptoms)
+    if has_symptom_text:
+        symptom_result = await analyze_symptoms_with_groq(symptom_input)
         symptom_condition = str(symptom_result.get("disease", "")).strip()
         symptom_confidence = _clip_probability(float(symptom_result.get("probability", 0.0)))
         symptom_risk = str(symptom_result.get("risk", "")).strip().lower()
         symptom_summary = str(symptom_result.get("summary", "")).strip()
 
-    if has_image and cleaned_symptoms:
+    if has_image and has_symptom_text:
         condition = image_condition if image_confidence >= symptom_confidence else (symptom_condition or image_condition)
         confidence = _clip_probability((image_confidence * 0.6) + (symptom_confidence * 0.4))
     elif has_image:
@@ -235,6 +291,32 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
     else:
         condition = symptom_condition or "general_non_specific_finding"
         confidence = symptom_confidence
+
+    if (
+        not has_image
+        and has_symptom_text
+        and (
+            _is_unknown_condition(condition)
+            or condition in {"general_non_specific_finding", "insufficient symptom data", "non-specific condition"}
+            or confidence < 0.45
+        )
+    ):
+        chat_text = await chat_followup_with_groq(symptom_input, conversation_context)
+        return {
+            "response_type": "chat",
+            "chat_response": chat_text,
+            "condition": "",
+            "confidence": 0.0,
+            "risk_level": "low",
+            "recommendation": {},
+            "notes": "Conversational response used for non-specific text-only input.",
+            "needs_image": False,
+            "needs_symptoms": False,
+            "follow_up_questions": [],
+            "detections": [],
+            "image_width": None,
+            "image_height": None,
+        }
 
     normalized_image_condition = str(image_condition or "").strip().lower().replace("_", " ")
     skin_non_specific_labels = {
@@ -249,7 +331,7 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
         "class 2",
     }
     non_skin_hint_keywords = {"fracture", "bone", "xray", "x-ray", "tumor", "stone", "kidney"}
-    has_non_skin_hints = any(keyword in cleaned_symptoms.lower() for keyword in non_skin_hint_keywords)
+    has_non_skin_hints = any(keyword in symptom_input.lower() for keyword in non_skin_hint_keywords)
 
     force_groq_for_uncertain_skin = (
         has_image
@@ -273,7 +355,7 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
     ):
         vision = await analyze_image_with_groq(
             image_bytes=image_bytes,
-            symptoms=cleaned_symptoms if cleaned_symptoms else None,
+            symptoms=symptom_input if has_symptom_text else None,
             image_context={
                 "image_mode": image_mode,
                 "routed_task": routed_task,
@@ -301,7 +383,7 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
             recommendation = await generate_recommendations_with_groq(
                 image_bytes=image_bytes,
                 condition=condition,
-                symptoms=cleaned_symptoms if cleaned_symptoms else None,
+                symptoms=symptom_input if has_symptom_text else None,
             )
         else:
             recommendation = get_recommendations_for_disease(condition)
@@ -331,7 +413,7 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
 
     recommendation["doctor_note"] = str(
         recommendation.get("doctor_note")
-        or _build_veteran_doctor_note(condition=condition, risk_level=risk_level, symptoms=cleaned_symptoms)
+        or _build_veteran_doctor_note(condition=condition, risk_level=risk_level, symptoms=symptom_input)
     ).strip()
 
     notes_parts = []
@@ -365,17 +447,17 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
     needs_image = False
     needs_symptoms = False
 
-    if has_image and not cleaned_symptoms:
+    if has_image and not has_symptom_text:
         needs_symptoms = True
         follow_up_questions = [
-            "I analyzed the image. What symptoms are you currently experiencing?",
-            "When did these symptoms start, and are they getting worse?",
+            "Image analyzed; provide correlated patient symptoms and exam findings.",
+            "Add symptom onset, progression, and any red-flag clinical changes.",
         ]
-    elif cleaned_symptoms and not has_image:
+    elif has_symptom_text and not has_image:
         needs_image = True
         follow_up_questions = [
-            "Can you upload a relevant medical image to improve confidence?",
-            "If image upload is possible, share a clearer close-up from another angle.",
+            "Upload relevant imaging to improve diagnostic confidence.",
+            "If available, share a clearer close-up or alternate-view image for better interpretation.",
         ]
 
     _model_name = get_model_name_for_task(routed_task) if routed_task else ""

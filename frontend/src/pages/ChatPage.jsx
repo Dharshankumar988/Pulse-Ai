@@ -465,23 +465,39 @@ export default function ChatPage() {
     const doctorId = await resolveDoctorId();
     const latestBot = [...transcriptSource].reverse().find(item => item.role === 'bot' && item.data && !item.data.error);
     const diagnosis = latestBot?.data?.condition || 'chat_consultation';
+    const latestUser = [...transcriptSource].reverse().find(item => item.role === 'user');
+    const isGeneralChatSave = latestBot?.data?.response_type === 'chat';
 
-    const transcript = transcriptSource
+    const notesSource = isGeneralChatSave
+      ? [latestUser, latestBot].filter(Boolean)
+      : transcriptSource;
+
+    const transcript = notesSource
       .map((item) => {
+        if (!item) return '';
         if (item.role === 'user') {
-          return `Doctor: ${item.text || (item.image ? '[image uploaded]' : '[no text]')}`;
+          return item.text || (item.image ? '[image uploaded]' : '[no text]');
         }
         if (item.data?.error) {
-          return `Assistant: Error - ${item.data.error}`;
+          return `Error: ${item.data.error}`;
         }
         if (item.data?.response_type === 'chat' && item.data?.chat_response) {
-          return `Assistant: ${item.data.chat_response}`;
+          return item.data.chat_response;
+        }
+        const doctorNote = String(item.data?.recommendation?.doctor_note || '').trim();
+        if (doctorNote) {
+          return doctorNote;
+        }
+        const plainNotes = String(item.data?.notes || '').trim();
+        if (plainNotes) {
+          return plainNotes;
         }
         const condition = item.data?.condition || 'n/a';
         const confidence = Number(item.data?.confidence || 0).toFixed(3);
         const risk = item.data?.risk_level || 'n/a';
-        return `Assistant: Condition=${condition}, Confidence=${confidence}, Risk=${risk}`;
+        return `${condition} (${confidence}, ${risk})`;
       })
+      .filter(Boolean)
       .join('\n')
       .slice(0, 6000);
 
@@ -760,7 +776,7 @@ export default function ChatPage() {
                   <Bot size={16} className="text-purple-300" />
                 </div>
               )}
-              <div className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm ${
+              <div className={`max-w-[75%] rounded-2xl px-4 py-3 pr-16 text-sm ${
                 m.role === 'user'
                   ? 'bg-fuchsia-500/20 text-white rounded-br-md border border-fuchsia-300/20 shadow-[0_2px_15px_rgba(217,70,239,0.1)]'
                   : 'bg-white/[0.06] text-slate-200 rounded-bl-md border border-white/[0.1] backdrop-blur-sm'
