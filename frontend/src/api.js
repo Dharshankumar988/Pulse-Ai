@@ -1,6 +1,13 @@
 // ─── API helper ───
-const CLOUD_BASE = 'https://pulse-ai-backend-v06f.onrender.com';
+const CLOUD_BASE = 'https://pulse-ai-backend-v06f.onrender.com/api/v1';
 const LOCAL_BASE = 'http://127.0.0.1:8000/api/v1';
+const ENV_BASE = (import.meta.env.VITE_API_BASE_URL || '').trim();
+
+function normalizeBase(base) {
+  if (!base) return '';
+  const cleaned = base.replace(/\/+$/, '');
+  return cleaned.endsWith('/api/v1') ? cleaned : `${cleaned}/api/v1`;
+}
 
 function isLocal() {
   try { return ['localhost', '127.0.0.1'].includes(window.location.hostname); }
@@ -8,7 +15,8 @@ function isLocal() {
 }
 
 export function getBaseUrl() {
-  return isLocal() ? LOCAL_BASE : CLOUD_BASE;
+  if (isLocal()) return LOCAL_BASE;
+  return normalizeBase(ENV_BASE) || CLOUD_BASE;
 }
 
 export function setBaseUrl() {
