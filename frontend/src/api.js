@@ -1,5 +1,5 @@
 // ─── API helper ───
-const CLOUD_BASE = 'https://pulse-ai-5mcl.onrender.com/api/v1';
+const CLOUD_BASE = 'https://pulse-ai-backend-v06f.onrender.com';
 const LOCAL_BASE = 'http://127.0.0.1:8000/api/v1';
 
 function isLocal() {
