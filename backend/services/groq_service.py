@@ -6,6 +6,7 @@ import time
 import httpx
 
 from config.settings import settings
+from services.web_search_service import web_search
 
 
 class GroqServiceError(RuntimeError):
@@ -14,7 +15,7 @@ class GroqServiceError(RuntimeError):
 
 _SYMPTOM_CACHE: dict[str, tuple[float, dict]] = {}
 _UNCERTAINTY_CACHE: dict[str, tuple[float, dict]] = {}
-_CHAT_PROMPT_VERSION = "v3"
+_CHAT_PROMPT_VERSION = "v5"
 
 
 def _safe_float(value, default: float = 0.0) -> float:
@@ -517,8 +518,9 @@ def _chat_cache_set(key: str, payload: str) -> None:
     _CHAT_CACHE[key] = (time.time(), payload)
 
 
-def _sanitize_physician_chat_response(text: str) -> str:
+def _sanitize_physician_chat_response(text: str, include_access_policy: bool = True) -> str:
     cleaned = str(text or "").strip()
+    cleaned = re.sub(r"(?i)this\s+system\s+is\s+for\s+verified\s+physicians\s+and\s+clinicians\s+only[^.?!]*[.?!]?", "", cleaned)
     cleaned = re.sub(r"(?i)\bconsult\s+(with\s+)?your\s+(own\s+)?physician\b[^.?!]*[.?!]?", "", cleaned)
     cleaned = re.sub(r"(?i)\bthis\s+does\s+not\s+replace\s+medical\s+advice\b[^.?!]*[.?!]?", "", cleaned)
     cleaned = re.sub(r"(?i)\balways\s+important\s+to\s+consult\s+your\s+physician\b[^.?!]*[.?!]?", "", cleaned)
@@ -543,55 +545,78 @@ def _sanitize_physician_chat_response(text: str) -> str:
 
     if has_layperson_tone:
         cleaned = (
-            "Colleague, from a senior-clinician standpoint, I would keep this pragmatic: establish the immediate risk tier, "
-            "prioritize focused history and exam findings, and narrow differentials before treatment escalation. "
-            "If pre-test uncertainty is high, use targeted investigations and early specialist input rather than broad empiric changes."
+            "Hey colleague! Happy to help with whatever you're working on. "
+            "Share the clinical scenario — symptoms, imaging, differentials — and I'll keep it practical and actionable."
         )
 
-    access_line = "Access policy: this assistant is intended for verified physicians/clinicians only; non-verified users must not use it."
-    if access_line.lower() not in cleaned.lower():
-        cleaned = f"{access_line}\n\n{cleaned}" if cleaned else access_line
+    # Allow up to 5 sentences for adequate answers, trim only if excessively long.
+    sentence_chunks = re.split(r"(?<=[.!?])\s+", cleaned)
+    if len(sentence_chunks) > 6:
+        cleaned = " ".join(chunk.strip() for chunk in sentence_chunks[:5] if chunk.strip())
+
+    if include_access_policy:
+        access_line = "Access policy: this assistant is intended for verified physicians/clinicians only; non-verified users must not use it."
+        if access_line.lower() not in cleaned.lower():
+            cleaned = f"{access_line}\n\n{cleaned}" if cleaned else access_line
     return cleaned
 
 
 async def chat_followup_with_groq(user_message: str, conversation_context: str = "") -> str:
-    """Generate a conversational paragraph response for follow-up questions (no structured template)."""
+    """Generate a conversational paragraph response for follow-up questions (no structured template).
+
+    For general knowledge questions the function performs a quick web search and feeds the
+    results into the LLM prompt so it can give grounded, up-to-date answers.
+    """
     normalized = _normalize_symptoms(user_message)
     cache_key = f"chat::{_CHAT_PROMPT_VERSION}::{normalized}::{_normalize_symptoms(conversation_context)}"
     cached = _chat_cache_get(cache_key)
     if cached is not None:
         return cached
 
-    fallback_text = (
-        "Access policy: this assistant is intended for verified physicians/clinicians only; non-verified users must not use it. "
-        "Colleague, based on the available details, I would frame this as a conservative, stepwise management decision: "
-        "prioritize clinical reassessment, refine differentials with focused history/exam, and reserve treatment escalation "
-        "until objective findings support it. If uncertainty remains, coordinate specialty input early."
+    include_access_policy = not bool((conversation_context or "").strip())
+
+    # ---- Web search for general / knowledge questions ----
+    web_context = ""
+    _lower = normalized.replace("?", " ").strip()
+    _is_general_question = (
+        any(kw in _lower for kw in ("what is", "what are", "who is", "how does", "how do", "when did", "where is", "define", "explain", "tell me about", "meaning of"))
+        or (len(_lower.split()) >= 3 and "?" in user_message)
     )
+    if _is_general_question:
+        web_context = await web_search(user_message)
+
+    fallback_core = (
+        "Hey colleague, happy to help. Based on what you've shared so far I'd keep things practical: "
+        "refine the working differentials with focused history/exam, and escalate only when objective findings support it. "
+        "Let me know what you're working with and I'll dig in."
+    )
+    fallback_text = _sanitize_physician_chat_response(fallback_core, include_access_policy=include_access_policy)
 
     api_key = settings.groq_api_key
     if not api_key:
         return fallback_text
 
     prompt = (
-        "You are Pulse, a veteran senior physician advising other doctors. "
-        "The user is a clinician asking a follow-up question or having a general clinical discussion. "
-        "Respond naturally in 1-3 concise paragraphs. Do NOT use any structured template, "
-        "do NOT output JSON, do NOT include fields like Condition/Confidence/Risk. "
-        "Use physician-to-physician tone: concise, practical, differential-oriented, and safety-focused. "
-        "Provide clinical reasoning, risk stratification logic, and stepwise management suggestions suitable for doctors. "
-        "Avoid layperson phrasing. Do not include statements such as 'consult your own physician' or other patient-facing disclaimers. "
-        "Start with a brief access policy line stating this system is for verified physicians/clinicians only and non-verified users must not use it.\n\n"
+        "You are Pulse, a friendly and knowledgeable senior physician assistant used only by doctors. "
+        "The user is a clinician. Respond in a warm, professional but approachable tone — like a helpful colleague. "
+        "Keep answers concise but adequate (3-5 sentences for typical queries, more if user explicitly asks for detail). "
+        "Do NOT use any structured template, JSON, or Condition/Confidence/Risk fields. "
+        "For clinical questions: give differential-oriented reasoning, risk stratification, and practical next steps. "
+        "For general knowledge questions: give a clear, accurate answer using provided web search context if available. "
+        "For casual messages (hi/hello/good morning): respond warmly and ask what clinical scenario they'd like help with. "
+        "Do not repeat access-policy language on every reply.\n\n"
     )
+    if web_context:
+        prompt += f"Web search context (use to ground your answer): {web_context}\n\n"
     if conversation_context:
         prompt += f"Previous conversation context: {conversation_context}\n\n"
-    prompt += f"User question: {user_message}"
+    prompt += f"User message: {user_message}"
 
     payload = {
         "model": settings.groq_model,
         "temperature": 0.3,
         "messages": [
-            {"role": "system", "content": "You are Pulse, a veteran consultant physician assistant for doctors only. Reply in plain text paragraphs only, with no templates or JSON."},
+            {"role": "system", "content": "You are Pulse, a friendly senior physician assistant for doctors only. Reply in plain text paragraphs. Be warm, concise, and helpful."},
             {"role": "user", "content": prompt},
         ],
     }
@@ -612,7 +637,10 @@ async def chat_followup_with_groq(user_message: str, conversation_context: str =
             response.raise_for_status()
 
         data = response.json()
-        content = _sanitize_physician_chat_response(data["choices"][0]["message"]["content"])
+        content = _sanitize_physician_chat_response(
+            data["choices"][0]["message"]["content"],
+            include_access_policy=include_access_policy,
+        )
         _chat_cache_set(cache_key, content)
         return content
     except Exception:

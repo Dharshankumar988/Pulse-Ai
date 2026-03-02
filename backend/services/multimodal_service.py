@@ -39,10 +39,10 @@ def _build_veteran_doctor_note(condition: str, risk_level: str, symptoms: str) -
     risk_text = str(risk_level or "medium").lower()
 
     return (
-        f"Based on the current pattern, this most closely fits {condition_text}. "
-        f"Given the present risk level ({risk_text}), manage this in a stepwise way: stabilize symptoms, "
-        f"watch for deterioration, and escalate promptly if red-flag signs appear. "
-        f"Key clinical context considered: {symptoms_text[:160]}."
+        f"This pattern is most consistent with {condition_text}. "
+        f"Risk level: {risk_text} — I'd recommend a stepwise approach: stabilize, monitor for deterioration, "
+        f"and escalate if red-flag signs emerge. "
+        f"Clinical context: {symptoms_text[:160]}."
     )
 
 
@@ -85,6 +85,8 @@ def _is_followup_chat(symptoms_text: str) -> bool:
     # Greetings/small-talk should never trigger disease analysis.
     greeting_tokens = {
         "hi", "hello", "hey", "hii", "helo", "yo", "sup", "good morning", "good afternoon", "good evening",
+        "good night", "howdy", "hey there", "hi there", "hello there",
+        "how are you", "how r u", "whats up", "what s up",
         "thanks", "thank you", "ok", "okay", "alright", "fine",
     }
     if normalized_lower in greeting_tokens:
@@ -151,6 +153,8 @@ def _looks_like_symptom_report(text: str) -> bool:
 
     greeting_tokens = {
         "hi", "hello", "hey", "hii", "helo", "yo", "sup", "good morning", "good afternoon", "good evening",
+        "good night", "howdy", "hey there", "hi there", "hello there",
+        "how are you", "how r u", "whats up", "what s up",
         "thanks", "thank you", "ok", "okay", "alright", "fine",
     }
     if normalized in greeting_tokens:
@@ -175,6 +179,180 @@ def _looks_like_symptom_report(text: str) -> bool:
         return True
 
     return False
+
+
+def _is_alternate_drug_request(text: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9\s]", " ", str(text or "").lower())
+    normalized = " ".join(normalized.split())
+    phrases = {
+        "alternate drug",
+        "alternative drug",
+        "another drug",
+        "different drug",
+        "other drug",
+        "alternate medicine",
+        "alternative medicine",
+        "another medication",
+        "different medication",
+        "drug alternative",
+    }
+    if normalized in phrases:
+        return True
+    return any(phrase in normalized for phrase in phrases)
+
+
+def _infer_condition_from_context(current_text: str, context_text: str) -> str | None:
+    merged = f"{context_text} | {current_text}".lower()
+
+    direct_patterns = [
+        r"condition\s*=\s*([a-z_\- ]+)",
+        r"analysis\s*:\s*([a-z_\- ]+)",
+        r"diagnosis\s*:\s*([a-z_\- ]+)",
+    ]
+    for pattern in direct_patterns:
+        match = re.search(pattern, merged)
+        if match and match.group(1).strip():
+            return match.group(1).strip()
+
+    keyword_map = {
+        "fracture": "fracture",
+        "distal radius": "fracture",
+        "radius fracture": "fracture",
+        "kidney stone": "kidney_stone",
+        "renal stone": "kidney_stone",
+        "stone": "kidney_stone",
+        "tumor": "tumor",
+        "mass": "tumor",
+        "skin": "skin_condition",
+        "dermat": "skin_condition",
+    }
+    for key, value in keyword_map.items():
+        if key in merged:
+            return value
+    return None
+
+
+def _build_alternate_drug_response(condition_hint: str | None, recommendation: dict | None) -> str:
+    if not recommendation:
+        return (
+            "Happy to help with an alternate drug! I just need a bit more context — "
+            "share the target condition or current medication class, reason for switching (intolerance, resistance, ADR), "
+            "and any constraints (renal/hepatic function, bleeding risk, key interactions). "
+            "That way I can give you a grounded recommendation."
+        )
+
+    primary = (recommendation.get("drugs") or [""])[0]
+    alternatives = recommendation.get("alternative_drugs") or []
+    cautions = recommendation.get("safety_cautions") or []
+    refs = recommendation.get("guideline_sources") or []
+    condition_text = str(condition_hint or recommendation.get("disease_key") or "target condition").replace("_", " ").strip()
+
+    alt_text = ", ".join(str(item) for item in alternatives[:2]) if alternatives else "no alternate listed in current guidelines"
+    caution_text = "; ".join(str(item) for item in cautions[:2]) if cautions else "standard contraindication and interaction checks apply"
+    refs_text = "; ".join(str(item) for item in refs[:2]) if refs else "internal knowledge-base"
+
+    return (
+        f"For **{condition_text}**, here's what I'd suggest:\n\n"
+        f"- **Current first-line:** {primary or 'not mapped'}\n"
+        f"- **Alternatives:** {alt_text}\n"
+        f"- **Safety check:** {caution_text}\n"
+        f"- **Source:** {refs_text}\n\n"
+        "Let me know if you need dosing details or have specific patient constraints to factor in."
+    )
+
+
+def _is_stronger_drug_request(text: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9\s]", " ", str(text or "").lower())
+    normalized = " ".join(normalized.split())
+    triggers = [
+        "stronger drug",
+        "stronger medicine",
+        "stronger medication",
+        "more potent drug",
+        "more potent medicine",
+        "increase potency",
+        "stronger option",
+    ]
+    return any(trigger in normalized for trigger in triggers)
+
+
+def _is_casual_greeting(text: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9\s]", " ", str(text or "").lower())
+    normalized = " ".join(normalized.split())
+    greetings = {
+        "hi", "hello", "hey", "hii", "helo", "yo", "sup",
+        "good morning", "good evening", "good afternoon", "good night",
+        "how are you", "how r u", "whats up", "what s up", "howdy",
+        "hey there", "hi there", "hello there",
+    }
+    return normalized in greetings
+
+
+def _build_stronger_drug_response(condition_hint: str | None, recommendation: dict | None) -> str:
+    if not recommendation:
+        return (
+            "Sure, happy to help escalate! To recommend a stronger option I need:\n\n"
+            "- **Target condition** and current drug/class\n"
+            "- **Reason for escalation** (inadequate response, breakthrough symptoms)\n"
+            "- **Constraints** (renal/hepatic function, bleeding risk, key interactions)\n\n"
+            "Share those and I'll give you a specific recommendation."
+        )
+
+    primary = (recommendation.get("drugs") or [""])[0]
+    alternatives = recommendation.get("alternative_drugs") or []
+    cautions = recommendation.get("safety_cautions") or []
+    refs = recommendation.get("guideline_sources") or []
+    condition_text = str(condition_hint or recommendation.get("disease_key") or "target condition").replace("_", " ").strip()
+
+    stronger = str(alternatives[0]) if alternatives else "No stronger mapped alternative in current guideline set"
+    caution = str(cautions[0]) if cautions else "Apply contraindication and interaction checks before escalation"
+    ref = str(refs[0]) if refs else "Internal guideline mapping"
+
+    return (
+        f"For **{condition_text}**, here's the escalation path:\n\n"
+        f"- **Current first-line:** {primary or 'not mapped'}\n"
+        f"- **Stronger option:** {stronger}\n"
+        f"- **Safety check before switching:** {caution}\n"
+        f"- **Source:** {ref}\n\n"
+        "Need dosing specifics or want to factor in additional patient constraints? Just ask."
+    )
+
+
+def _is_skin_like_label(label: str | None) -> bool:
+    text = str(label or "").strip().lower()
+    skin_markers = {
+        "fungal", "eczema", "acne", "psoriasis", "dermatitis", "skin", "lesion", "pimple", "hives", "itch"
+    }
+    return any(marker in text for marker in skin_markers)
+
+
+def _harmonize_condition_with_detections(condition: str, confidence: float, detections: list[dict]) -> tuple[str, float]:
+    if not detections:
+        return condition, confidence
+
+    top_detection = max(detections, key=lambda item: float(item.get("confidence", 0.0)))
+    top_label = str(top_detection.get("label", "")).strip()
+    top_conf = _clip_probability(float(top_detection.get("confidence", 0.0)))
+
+    benign_or_non_specific = {
+        "no apparent disease",
+        "no anomaly",
+        "no anomaly detected",
+        "normal",
+        "normal skin",
+        "general_non_specific_finding",
+        "general non specific finding",
+        "unclassified_image_finding",
+    }
+
+    normalized_condition = str(condition or "").strip().lower().replace("_", " ")
+    if not top_label or _is_unknown_condition(top_label):
+        return condition, confidence
+
+    if (normalized_condition in benign_or_non_specific or _is_unknown_condition(condition)) and top_conf >= 0.75:
+        return top_label, max(confidence, top_conf)
+
+    return condition, confidence
 
 
 async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | None) -> dict:
@@ -210,6 +388,88 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
 
     # --- Text-only conversational handling (follow-up or general prompts) ---
     if not has_image and (_is_followup_chat(cleaned_symptoms) or not _looks_like_symptom_report(symptom_input)):
+        if _is_casual_greeting(symptom_input):
+            short_reply = (
+                "Hey there, colleague! Welcome to Pulse. \n\n"
+                "I'm here to help with clinical analysis, drug recommendations, differentials — whatever you need. "
+                "Just share:\n"
+                "- **Symptoms** you're evaluating\n"
+                "- **An image** (X-ray, skin photo, scan) for AI-assisted analysis\n"
+                "- Or **both** for the best results!\n\n"
+                "What are you working on today?"
+            )
+            return {
+                "response_type": "chat",
+                "chat_response": short_reply,
+                "condition": "",
+                "confidence": 0.0,
+                "risk_level": "low",
+                "recommendation": {},
+                "notes": "Friendly greeting with guidance on how to use the assistant.",
+                "needs_image": False,
+                "needs_symptoms": False,
+                "follow_up_questions": [
+                    "Describe the patient's symptoms and timeline.",
+                    "Upload a clinical image for AI analysis.",
+                    "Ask me any medical question — I can also search the web for you.",
+                ],
+                "detections": [],
+                "image_width": None,
+                "image_height": None,
+            }
+
+        if _is_alternate_drug_request(symptom_input):
+            condition_hint = _infer_condition_from_context(symptom_input, conversation_context)
+            recommendation = None
+            if condition_hint:
+                try:
+                    recommendation = get_recommendations_for_disease(condition_hint, risk_level="medium")
+                except KnowledgeBaseError:
+                    recommendation = None
+
+            alt_response = _build_alternate_drug_response(condition_hint, recommendation)
+            return {
+                "response_type": "chat",
+                "chat_response": alt_response,
+                "condition": "",
+                "confidence": 0.0,
+                "risk_level": "low",
+                "recommendation": recommendation or {},
+                "notes": "Condition-targeted alternate drug response.",
+                "needs_image": False,
+                "needs_symptoms": False,
+                "follow_up_questions": [],
+                "detections": [],
+                "image_width": None,
+                "image_height": None,
+            }
+
+        if _is_stronger_drug_request(symptom_input):
+            condition_hint = _infer_condition_from_context(symptom_input, conversation_context)
+            recommendation = None
+            if condition_hint:
+                try:
+                    recommendation = get_recommendations_for_disease(condition_hint, risk_level="high")
+                except KnowledgeBaseError:
+                    recommendation = None
+
+            stronger_response = _build_stronger_drug_response(condition_hint, recommendation)
+            return {
+                "response_type": "chat",
+                "chat_response": stronger_response,
+                "condition": "",
+                "confidence": 0.0,
+                "risk_level": "low",
+                "recommendation": recommendation or {},
+                "notes": "Condition-targeted stronger drug response.",
+                "needs_image": False,
+                "needs_symptoms": False,
+                "follow_up_questions": [],
+                "detections": [],
+                "image_width": None,
+                "image_height": None,
+            }
+
         chat_text = await chat_followup_with_groq(symptom_input, conversation_context)
         return {
             "response_type": "chat",
@@ -377,6 +637,15 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
 
     if has_image and image_mode == "color" and condition in {"unknown_condition", "general_non_specific_finding", "", "class_0", "class_1", "class_2"}:
         condition = "skin condition"
+
+    if has_image and image_mode == "grayscale":
+        detections = [item for item in detections if not _is_skin_like_label(item.get("label"))]
+        if _is_skin_like_label(condition):
+            condition = "unclassified_image_finding"
+            confidence = min(confidence, 0.45)
+
+    if has_image and detections:
+        condition, confidence = _harmonize_condition_with_detections(condition, confidence, detections)
 
     if symptom_risk in {"low", "medium", "high"}:
         risk_level = symptom_risk

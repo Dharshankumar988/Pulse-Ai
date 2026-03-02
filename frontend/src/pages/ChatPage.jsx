@@ -1,7 +1,37 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { api } from '../api';
 import GlassCard, { SectionTitle, Badge, StatusMsg, Btn, Input } from '../components/ui';
 import { MessageCircle, Send, Sparkles, Bot, User, Paperclip, X } from 'lucide-react';
+
+/**
+ * Lightweight markdown-ish text renderer for chat bubbles.
+ * Handles **bold**, *italic*, `code`, newlines, and - bullet lists.
+ */
+function RichText({ text }) {
+  if (!text) return null;
+  const lines = text.split('\n');
+  return (
+    <div className="space-y-1.5 leading-relaxed">
+      {lines.map((line, li) => {
+        const trimmed = line.trim();
+        if (!trimmed) return <br key={li} />;
+        const isBullet = /^[-•*]\s/.test(trimmed);
+        const content = isBullet ? trimmed.replace(/^[-•*]\s+/, '') : trimmed;
+        // Inline formatting: **bold**, *italic*, `code`
+        const parts = content.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/).map((seg, si) => {
+          if (seg.startsWith('**') && seg.endsWith('**')) return <strong key={si} className="text-white font-semibold">{seg.slice(2, -2)}</strong>;
+          if (seg.startsWith('*') && seg.endsWith('*')) return <em key={si}>{seg.slice(1, -1)}</em>;
+          if (seg.startsWith('`') && seg.endsWith('`')) return <code key={si} className="px-1 py-0.5 bg-white/10 rounded text-xs">{seg.slice(1, -1)}</code>;
+          return seg;
+        });
+        if (isBullet) {
+          return <div key={li} className="flex gap-2 pl-2"><span className="text-teal-400 mt-0.5">•</span><span>{parts}</span></div>;
+        }
+        return <p key={li}>{parts}</p>;
+      })}
+    </div>
+  );
+}
 
 function buildPrompts(result, hasSymptoms, hasImage) {
   const prompts = [];
@@ -766,7 +796,8 @@ export default function ChatPage() {
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-slate-500">
               <Bot size={40} className="mb-3 text-purple-400/60" />
-              <p className="text-sm">Send symptoms, attach an image, or provide both in one request</p>
+              <p className="text-sm font-medium text-slate-300">Hey doc, how can I help?</p>
+              <p className="text-xs text-slate-500 mt-1">Type symptoms, upload an image, ask anything — I've got you covered.</p>
             </div>
           )}
           {messages.map((m, i) => (
@@ -803,7 +834,17 @@ export default function ChatPage() {
                   <p className="text-red-400">{m.data.error}</p>
                 ) : m.data?.response_type === 'chat' && m.data?.chat_response ? (
                   <div className="space-y-2">
-                    <p className="whitespace-pre-wrap text-slate-200 leading-relaxed">{m.data.chat_response}</p>
+                    <RichText text={m.data.chat_response} />
+                    {m.data?.follow_up_questions?.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {m.data.follow_up_questions.map((q, qi) => (
+                          <button key={qi} onClick={() => setSymptoms(q)}
+                            className="px-2.5 py-1 rounded-full text-[11px] bg-purple-500/10 text-purple-200 border border-purple-400/20 hover:bg-purple-500/20 transition cursor-pointer">
+                            {q}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-2">

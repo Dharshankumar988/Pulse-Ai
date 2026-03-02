@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './AuthContext';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
@@ -14,6 +14,7 @@ import {
   LogOut,
   Menu,
   X,
+  AlertTriangle,
 } from 'lucide-react';
 
 const navItems = [
@@ -27,6 +28,18 @@ function Shell() {
   const { user, isAdmin, logout } = useAuth();
   const [tab, setTab] = useState('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [showAccessPolicy, setShowAccessPolicy] = useState(false);
+
+  // Show access-policy popup once per login session
+  useEffect(() => {
+    const dismissed = sessionStorage.getItem('pulseAccessPolicyDismissed');
+    if (!dismissed) setShowAccessPolicy(true);
+  }, []);
+
+  const dismissPolicy = () => {
+    setShowAccessPolicy(false);
+    sessionStorage.setItem('pulseAccessPolicyDismissed', '1');
+  };
 
   const visibleNav = navItems.filter(n => !n.adminOnly || isAdmin);
 
@@ -42,6 +55,27 @@ function Shell() {
 
   return (
     <div className="min-h-screen flex flex-col">
+      {/* Access-policy popup */}
+      {showAccessPolicy && (
+        <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md glass-strong rounded-3xl p-8 text-center space-y-5 animate-fade-up shadow-2xl border border-amber-400/20">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-amber-500/15 border border-amber-400/30 mx-auto">
+              <AlertTriangle size={30} className="text-amber-400" />
+            </div>
+            <h2 className="text-xl font-bold text-white">Access Policy</h2>
+            <p className="text-slate-300 text-sm leading-relaxed">
+              This assistant is intended for <span className="text-amber-300 font-semibold">verified physicians / clinicians only</span>; non-verified users must not use it.
+            </p>
+            <button
+              onClick={dismissPolicy}
+              className="mt-2 px-6 py-2.5 rounded-xl bg-teal-600/30 hover:bg-teal-600/50 text-teal-200 text-sm font-semibold border border-teal-400/30 transition cursor-pointer"
+            >
+              I understand &mdash; Continue
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Top navigation bar */}
       <header className="glass-strong sticky top-0 z-50 px-5 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
