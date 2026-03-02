@@ -474,6 +474,9 @@ export default function ChatPage() {
         if (item.data?.error) {
           return `Assistant: Error - ${item.data.error}`;
         }
+        if (item.data?.response_type === 'chat' && item.data?.chat_response) {
+          return `Assistant: ${item.data.chat_response}`;
+        }
         const condition = item.data?.condition || 'n/a';
         const confidence = Number(item.data?.confidence || 0).toFixed(3);
         const risk = item.data?.risk_level || 'n/a';
@@ -782,13 +785,17 @@ export default function ChatPage() {
                   </div>
                 ) : m.data?.error ? (
                   <p className="text-red-400">{m.data.error}</p>
+                ) : m.data?.response_type === 'chat' && m.data?.chat_response ? (
+                  <div className="space-y-2">
+                    <p className="whitespace-pre-wrap text-slate-200 leading-relaxed">{m.data.chat_response}</p>
+                  </div>
                 ) : (
                   <div className="space-y-2">
                     <p><span className="text-slate-400">Condition:</span> <span className="font-semibold text-white">{m.data.condition || '—'}</span></p>
                     <p><span className="text-slate-400">Confidence:</span> {Number(m.data.confidence || 0).toFixed(3)}</p>
                     <p><span className="text-slate-400">Risk:</span> <Badge level={m.data.risk_level || 'low'} /></p>
                     <DetectionOverlayImage image={m.image} data={m.data} onOpenImage={openImageModal} />
-                    {m.data.recommendation && typeof m.data.recommendation === 'object' && (
+                    {m.data.recommendation && typeof m.data.recommendation === 'object' && Object.keys(m.data.recommendation).length > 0 && (
                       <div className="text-xs bg-black/20 rounded-lg p-2 space-y-2">
                         <p className="text-slate-300 font-semibold">Suggested next steps</p>
                         <p><span className="text-slate-400">Most apt drug:</span> {m.data.recommendation.primary_drug || ((m.data.recommendation.drugs || [])[0] || 'No specific medication suggested without clinician confirmation.')}</p>

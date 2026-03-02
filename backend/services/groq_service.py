@@ -494,3 +494,85 @@ async def analyze_uncertain_image_with_groq(symptoms: str | None, image_context:
         fallback = {**fallback_output, "summary": f"Groq unavailable, fallback used: {exc}"}
         _uncertainty_cache_set(cache_key, fallback)
         return fallback
+
+
+_CHAT_CACHE: dict[str, tuple[float, str]] = {}
+
+
+def _chat_cache_get(key: str) -> str | None:
+    ttl = max(1, settings.groq_cache_ttl_seconds)
+    cached = _CHAT_CACHE.get(key)
+    if cached is None:
+        return None
+    created_at, payload = cached
+    if (time.time() - created_at) > ttl:
+        _CHAT_CACHE.pop(key, None)
+        return None
+    return payload
+
+
+def _chat_cache_set(key: str, payload: str) -> None:
+    _CHAT_CACHE[key] = (time.time(), payload)
+
+
+async def chat_followup_with_groq(user_message: str, conversation_context: str = "") -> str:
+    """Generate a conversational paragraph response for follow-up questions (no structured template)."""
+    normalized = _normalize_symptoms(user_message)
+    cache_key = f"chat::{normalized}::{_normalize_symptoms(conversation_context)}"
+    cached = _chat_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    fallback_text = (
+        "I'd be happy to help with your question. Based on what you've shared, "
+        "I recommend discussing this with your treating physician who can review "
+        "your full clinical picture and adjust the plan accordingly."
+    )
+
+    api_key = settings.groq_api_key
+    if not api_key:
+        return fallback_text
+
+    prompt = (
+        "You are Pulse, a helpful and knowledgeable medical assistant. "
+        "The user is asking a follow-up question or having a general medical conversation. "
+        "Respond naturally in 1-3 concise paragraphs. Do NOT use any structured template, "
+        "do NOT output JSON, do NOT include fields like Condition/Confidence/Risk. "
+        "Just answer the question helpfully and conversationally as a knowledgeable medical professional would. "
+        "Be clear, practical, and safety-conscious. If recommending a drug, mention it naturally in the response. "
+        "Always remind them to consult their physician for final decisions.\n\n"
+    )
+    if conversation_context:
+        prompt += f"Previous conversation context: {conversation_context}\n\n"
+    prompt += f"User question: {user_message}"
+
+    payload = {
+        "model": settings.groq_model,
+        "temperature": 0.3,
+        "messages": [
+            {"role": "system", "content": "You are Pulse, a friendly and concise medical assistant. Respond in plain text paragraphs only."},
+            {"role": "user", "content": prompt},
+        ],
+    }
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        timeout = httpx.Timeout(20.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+
+        data = response.json()
+        content = data["choices"][0]["message"]["content"].strip()
+        _chat_cache_set(cache_key, content)
+        return content
+    except Exception:
+        return fallback_text

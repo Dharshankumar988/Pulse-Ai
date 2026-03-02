@@ -7,6 +7,7 @@ from services.groq_service import (
     analyze_image_with_groq,
     analyze_symptoms_with_groq,
     analyze_uncertain_image_with_groq,
+    chat_followup_with_groq,
     generate_recommendations_with_groq,
 )
 from services.knowledge_base_service import KnowledgeBaseError, get_recommendations_for_disease
@@ -52,12 +53,84 @@ def _is_unknown_condition(value: str | None) -> bool:
     }
 
 
+def _is_followup_chat(symptoms_text: str) -> bool:
+    """Detect if the user message is a follow-up/conversational question rather than initial symptom reporting.
+
+    Returns True when the message looks like a conversational follow-up (e.g. asking for
+    alternative drugs, clarifying questions, general medical queries) and does NOT look
+    like a fresh symptom description that should trigger the full analysis template.
+    """
+    if not symptoms_text:
+        return False
+
+    # Extract the "current=" portion which is what the user actually typed right now
+    current_text = symptoms_text
+    if "current=" in symptoms_text:
+        current_text = symptoms_text.split("current=")[-1].strip()
+    # If there is no current text, it's not a follow-up
+    if not current_text:
+        return False
+
+    lower = current_text.lower().strip()
+
+    # Check if there is conversation context (indicates this is NOT the first message)
+    has_conversation_context = "conversation=" in symptoms_text
+
+    # If there's no conversation context, this is likely the first message - treat as analysis
+    if not has_conversation_context:
+        return False
+
+    # Patterns that indicate a follow-up / conversational question
+    followup_indicators = [
+        # Asking for alternatives
+        "alternative", "another drug", "better drug", "different drug", "other drug",
+        "other medication", "another medication", "different medication", "substitute",
+        "replacement", "instead of", "switch to", "can you suggest", "can u suggest",
+        "give me a better", "give me another", "recommend another", "what else",
+        # Asking about something
+        "what is", "what are", "what about", "how about", "how does", "how do",
+        "how long", "how much", "how often", "can i", "can you", "could you",
+        "should i", "is it", "is there", "are there", "do i", "does it",
+        "tell me", "explain", "why", "when should",
+        # Thank you / acknowledgement
+        "thank", "thanks", "ok", "okay", "got it", "understood",
+        # General conversational
+        "more info", "more details", "more about", "elaborate",
+        "what do you think", "your opinion", "side effect", "side effects",
+        "dosage", "how to take", "precaution", "contraindication",
+        "interact", "interaction",
+    ]
+
+    for indicator in followup_indicators:
+        if indicator in lower:
+            return True
+
+    # Short messages with a question mark are likely follow-ups
+    if "?" in current_text and len(current_text.split()) <= 20:
+        return True
+
+    return False
+
+
+def _extract_current_and_context(symptoms_text: str) -> tuple[str, str]:
+    """Split the symptoms string into (current_user_message, conversation_context)."""
+    current = symptoms_text
+    context = ""
+    if "current=" in symptoms_text:
+        parts = symptoms_text.split("current=", 1)
+        context = parts[0].strip().rstrip("|").strip()
+        current = parts[1].strip()
+    return current, context
+
+
 async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | None) -> dict:
     has_image = bool(image_bytes)
     cleaned_symptoms = (symptoms or "").strip()
 
     if not has_image and not cleaned_symptoms:
         return {
+            "response_type": "analysis",
+            "chat_response": "",
             "condition": "insufficient_data",
             "confidence": 0.0,
             "risk_level": "low",
@@ -73,6 +146,26 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
                 "Please describe your symptoms and when they started.",
                 "Please upload a relevant medical image if available.",
             ],
+            "detections": [],
+            "image_width": None,
+            "image_height": None,
+        }
+
+    # --- Follow-up chat detection (text-only, no image) ---
+    if not has_image and _is_followup_chat(cleaned_symptoms):
+        current_message, conversation_context = _extract_current_and_context(cleaned_symptoms)
+        chat_text = await chat_followup_with_groq(current_message, conversation_context)
+        return {
+            "response_type": "chat",
+            "chat_response": chat_text,
+            "condition": "",
+            "confidence": 0.0,
+            "risk_level": "low",
+            "recommendation": {},
+            "notes": "Conversational follow-up response.",
+            "needs_image": False,
+            "needs_symptoms": False,
+            "follow_up_questions": [],
             "detections": [],
             "image_width": None,
             "image_height": None,
@@ -288,6 +381,8 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
     _model_name = get_model_name_for_task(routed_task) if routed_task else ""
 
     return {
+        "response_type": "analysis",
+        "chat_response": "",
         "condition": condition or "general_non_specific_finding",
         "confidence": confidence,
         "risk_level": risk_level,
