@@ -433,6 +433,13 @@ def get_model_load_status() -> dict:
     return status
 
 
+def get_model_name_for_task(task: str) -> str:
+    config = _MODEL_CONFIG.get(task)
+    if not config:
+        return ""
+    return str(config.get("model_name", ""))
+
+
 def detect_image_color_mode(image_bytes: bytes) -> str:
     _ensure_ml_imports()
     np_buffer = _np.frombuffer(image_bytes, dtype=_np.uint8)
@@ -534,20 +541,6 @@ def run_routed_image_analysis(image_bytes: bytes, symptoms_hint: str | None = No
         best_score = float(best_choice["score"])
         best_result = best_choice["result"]
         best_pred = _best_prediction(best_result)
-
-        if best_score < 0.55:
-            skin_result = run_ml_inference("skin_classification", image_bytes)
-            skin_pred = _best_prediction(skin_result)
-            skin_score = float((skin_pred or {}).get("confidence", 0.0))
-            if skin_score >= best_score:
-                return {
-                    "mode": "grayscale",
-                    "task": "skin_classification",
-                    "condition": str((skin_pred or {}).get("label", "skin condition")),
-                    "confidence": skin_score,
-                    "raw": skin_result,
-                    "notes": "Grayscale route had low confidence; switched to skin classifier fallback.",
-                }
 
         return {
             "mode": "grayscale",

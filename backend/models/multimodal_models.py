@@ -17,3 +17,5 @@ class MultimodalResponse(BaseModel):
     detections: list[dict] = Field(default_factory=list)
     image_width: int | None = None
     image_height: int | None = None
+    routed_task: str = ""
+    model_name: str = ""

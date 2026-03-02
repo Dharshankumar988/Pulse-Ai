@@ -10,7 +10,7 @@ from services.groq_service import (
     generate_recommendations_with_groq,
 )
 from services.knowledge_base_service import KnowledgeBaseError, get_recommendations_for_disease
-from services.ml_service import MLServiceError, run_routed_image_analysis
+from services.ml_service import MLServiceError, get_model_name_for_task, run_routed_image_analysis
 
 
 def _clip_probability(value: float) -> float:
@@ -285,6 +285,8 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
             "If image upload is possible, share a clearer close-up from another angle.",
         ]
 
+    _model_name = get_model_name_for_task(routed_task) if routed_task else ""
+
     return {
         "condition": condition or "general_non_specific_finding",
         "confidence": confidence,
@@ -297,4 +299,6 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
         "detections": detections,
         "image_width": image_width,
         "image_height": image_height,
+        "routed_task": routed_task,
+        "model_name": _model_name,
     }
