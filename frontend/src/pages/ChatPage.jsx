@@ -817,6 +817,9 @@ export default function ChatPage() {
                         <p><span className="text-slate-400">Most apt drug:</span> {m.data.recommendation.primary_drug || ((m.data.recommendation.drugs || [])[0] || 'No specific medication suggested without clinician confirmation.')}</p>
                         <p><span className="text-slate-400">Procedures:</span> {(m.data.recommendation.procedures || []).length ? (m.data.recommendation.procedures || []).join(', ') : 'Clinical reassessment advised.'}</p>
                         <p><span className="text-slate-400">Tests:</span> {(m.data.recommendation.tests || []).length ? (m.data.recommendation.tests || []).join(', ') : 'Further targeted tests may be needed.'}</p>
+                        {(m.data.recommendation.guideline_sources || []).length > 0 && (
+                          <p><span className="text-slate-400">Guideline sources:</span> {(m.data.recommendation.guideline_sources || []).join('; ')}</p>
+                        )}
                         {m.data.recommendation.doctor_note && (
                           <p>{m.data.recommendation.doctor_note}</p>
                         )}

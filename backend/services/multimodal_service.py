@@ -378,38 +378,41 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
     if has_image and image_mode == "color" and condition in {"unknown_condition", "general_non_specific_finding", "", "class_0", "class_1", "class_2"}:
         condition = "skin condition"
 
+    if symptom_risk in {"low", "medium", "high"}:
+        risk_level = symptom_risk
+    else:
+        risk_level = _risk_from_confidence(confidence)
+
     try:
-        if has_image:
-            recommendation = await generate_recommendations_with_groq(
-                image_bytes=image_bytes,
-                condition=condition,
-                symptoms=symptom_input if has_symptom_text else None,
-            )
-        else:
-            recommendation = get_recommendations_for_disease(condition)
-    except Exception:
+        recommendation = get_recommendations_for_disease(condition, risk_level=risk_level)
+    except KnowledgeBaseError:
         try:
-            recommendation = get_recommendations_for_disease(condition)
-        except KnowledgeBaseError:
+            if has_image:
+                recommendation = await generate_recommendations_with_groq(
+                    image_bytes=image_bytes,
+                    condition=condition,
+                    symptoms=symptom_input if has_symptom_text else None,
+                )
+            else:
+                raise KnowledgeBaseError("No grounded mapping for non-image condition")
+        except Exception:
             recommendation = {
                 "drugs": [],
+                "alternative_drugs": [],
+                "safety_cautions": ["No medication suggestion without condition-specific guideline match."],
                 "procedures": ["clinical reassessment"],
                 "tests": ["targeted diagnostic evaluation"],
+                "guideline_sources": ["No matched guideline mapping"],
                 "source": "knowledge_base_fallback",
             }
 
     drugs = recommendation.get("drugs") or []
     if isinstance(drugs, list) and drugs:
         recommendation["primary_drug"] = str(drugs[0])
-        recommendation["drugs"] = [str(drugs[0])]
+        recommendation["drugs"] = [str(item) for item in drugs[:2]]
     else:
-        recommendation["primary_drug"] = "No drug recommendation without clinician assessment"
+        recommendation["primary_drug"] = "No drug recommendation without condition-specific evidence"
         recommendation["drugs"] = []
-
-    if symptom_risk in {"low", "medium", "high"}:
-        risk_level = symptom_risk
-    else:
-        risk_level = _risk_from_confidence(confidence)
 
     recommendation["doctor_note"] = str(
         recommendation.get("doctor_note")

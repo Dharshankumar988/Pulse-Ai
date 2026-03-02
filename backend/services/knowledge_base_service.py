@@ -50,17 +50,33 @@ def _normalize_disease(disease: str) -> str:
     return "general_non_specific_finding"
 
 
-def get_recommendations_for_disease(disease: str) -> dict:
+def get_recommendations_for_disease(disease: str, risk_level: str | None = None) -> dict:
     kb = _load_kb()
     key = _normalize_disease(disease)
     value = kb.get(key)
     if not isinstance(value, dict):
         raise KnowledgeBaseError(f"No recommendation mapping for disease key: {key}")
 
+    first_line = value.get("first_line_drugs")
+    if not isinstance(first_line, list):
+        first_line = value.get("drugs", []) or []
+
+    alternative = value.get("alternative_drugs", []) or []
+    caution = value.get("avoid_or_caution", []) or []
+    references = value.get("guideline_sources", []) or []
+
+    if str(risk_level or "").lower() == "high" and len(first_line) > 1:
+        selected_drugs = [str(first_line[0])]
+    else:
+        selected_drugs = [str(item) for item in first_line[:2]]
+
     return {
         "disease_key": key,
-        "drugs": value.get("drugs", []) or [],
+        "drugs": selected_drugs,
+        "alternative_drugs": [str(item) for item in alternative[:2]],
+        "safety_cautions": [str(item) for item in caution[:3]],
         "procedures": value.get("procedures", []) or [],
         "tests": value.get("tests", []) or [],
+        "guideline_sources": [str(item) for item in references],
         "source": "knowledge_base",
     }
