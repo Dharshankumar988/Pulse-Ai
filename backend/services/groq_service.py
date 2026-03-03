@@ -147,9 +147,15 @@ def _image_to_data_url(image_bytes: bytes) -> str:
 
 
 async def analyze_image_with_groq(image_bytes: bytes, symptoms: str | None, image_context: dict | None = None) -> dict:
+    context = image_context or {}
+    context_condition = str(context.get("image_condition") or "").strip()
+    context_probability = max(0.0, min(1.0, _safe_float(context.get("image_confidence"), 0.35)))
+    fallback_disease = context_condition if context_condition and context_condition.lower() not in {"unknown", "unknown_condition", "unknown condition"} else "unclassified_image_finding"
+    fallback_probability = context_probability if context_probability > 0.0 else 0.35
+
     fallback_output = {
-        "disease": "skin condition",
-        "probability": 0.55,
+        "disease": fallback_disease,
+        "probability": fallback_probability,
         "severity": "moderate",
         "risk": "medium",
         "follow_up_questions": [

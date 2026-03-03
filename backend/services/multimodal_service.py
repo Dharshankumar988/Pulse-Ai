@@ -740,22 +740,33 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
                 "forced_due_to_rgb_image": force_groq_for_rgb,
             },
         )
-        condition = str(vision.get("disease", condition or "skin condition")).strip() or "skin condition"
+        condition = str(vision.get("disease", condition or "unclassified_image_finding")).strip() or "unclassified_image_finding"
         confidence = _clip_probability(float(vision.get("probability", confidence)))
         image_notes = str(vision.get("summary", image_notes or "Image analyzed by Groq vision"))
+        fallback_used = True
+
+    if has_image and (confidence < 0.6 or _is_unknown_condition(condition)):
+        uncertainty = await analyze_uncertain_image_with_groq(
+            symptoms=symptom_input if has_symptom_text else None,
+            image_context={
+                "image_mode": image_mode,
+                "routed_task": routed_task,
+                "image_condition": image_condition,
+                "image_confidence": image_confidence,
+                "vision_condition": condition,
+                "vision_confidence": confidence,
+            },
+        )
+        uncertain_condition = str(uncertainty.get("disease", "")).strip()
+        if uncertain_condition and not _is_unknown_condition(uncertain_condition):
+            condition = uncertain_condition
+        confidence = max(confidence, _clip_probability(float(uncertainty.get("probability", 0.0))))
+        image_notes = str(uncertainty.get("summary", image_notes or "Uncertainty-based Groq triage applied"))
         fallback_used = True
 
     if has_image and _is_unknown_condition(condition):
         condition = "unclassified_image_finding"
         fallback_used = True
-
-    if (
-        has_image
-        and image_mode == "color"
-        and routed_task == "skin_classification"
-        and condition in {"unknown_condition", "general_non_specific_finding", "", "class_0", "class_1", "class_2"}
-    ):
-        condition = "skin condition"
 
     if has_image and image_mode == "grayscale":
         detections = [item for item in detections if not _is_skin_like_label(item.get("label"))]
@@ -772,7 +783,35 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
         risk_level = _risk_from_confidence(confidence)
 
     recommendation = None
-    prefer_groq_text = has_symptom_text and not has_image
+
+    # When both image and symptoms are provided, prioritize a combined recommendation path
+    # that uses visual evidence + symptom context together.
+    if has_image and has_symptom_text:
+        try:
+            recommendation = await generate_recommendations_with_groq(
+                image_bytes=image_bytes,
+                condition=condition,
+                symptoms=symptom_input,
+            )
+        except Exception:
+            recommendation = None
+
+        if recommendation is None or not recommendation.get("drugs"):
+            try:
+                recommendation = await generate_text_recommendations_with_groq(
+                    condition=condition,
+                    symptoms=symptom_input,
+                    risk_level=risk_level,
+                )
+            except Exception:
+                recommendation = recommendation or None
+
+    prefer_groq_text = has_symptom_text and (
+        not has_image
+        or fallback_used
+        or confidence < 0.75
+        or _is_unknown_condition(condition)
+    )
 
     if prefer_groq_text:
         try:
@@ -819,6 +858,9 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
         suggested_condition = str(recommendation.get("disease_key", "")).strip().lower()
         if suggested_condition:
             condition = suggested_condition
+
+    normalized_condition_key = str(condition or "general_non_specific_finding").strip().lower().replace(" ", "_")
+    recommendation["disease_key"] = normalized_condition_key
 
     drugs = recommendation.get("drugs") or []
     if isinstance(drugs, list) and drugs:
