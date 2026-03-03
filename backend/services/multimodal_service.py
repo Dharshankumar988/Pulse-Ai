@@ -51,6 +51,22 @@ def _build_symptom_based_general_recommendation(symptoms: str, risk_level: str) 
     text = str(symptoms or "").lower()
     risk = str(risk_level or "medium").lower()
 
+    gi_markers = {"abdominal", "abdomen", "stomach", "cramp", "cramps", "vomit", "vomiting", "nausea", "diarrhea"}
+    severe_markers = {"severe", "very severe", "persistent", "worsening", "increasing"}
+    if any(marker in text for marker in gi_markers) and any(marker in text for marker in severe_markers):
+        return {
+            "drugs": ["ondansetron (for vomiting, if no contraindications)", "pantoprazole", "paracetamol"],
+            "alternative_drugs": ["dicyclomine (if cramp-predominant and clinician-approved)", "oral rehydration salts"],
+            "safety_cautions": [
+                "Avoid NSAID-first use in severe abdominal pain with vomiting unless clinician specifically indicates it.",
+                "Urgent in-person evaluation is needed for severe persistent abdominal pain, dehydration, blood in stool/vomit, high fever, or worsening symptoms.",
+            ],
+            "procedures": ["oral rehydration", "clear-fluid protocol", "close monitoring of urine output and hydration status"],
+            "tests": ["CBC and electrolytes", "abdominal examination", "targeted imaging/ultrasound if clinically indicated"],
+            "guideline_sources": ["symptom_based_severe_gastrointestinal_supportive_pathway"],
+            "source": "symptom_based_fallback",
+        }
+
     severe_pain_markers = {"severe", "very severe", "cannot walk", "can not walk", "unable to walk", "worsening", "increasing"}
     msk_markers = {"hip", "lower back", "lover back", "back pain", "spine", "spinal", "lumbar", "sciatica", "groin pain"}
     if any(marker in text for marker in msk_markers) and any(marker in text for marker in severe_pain_markers):
@@ -115,7 +131,7 @@ def _build_symptom_based_general_recommendation(symptoms: str, risk_level: str) 
         }
 
     return {
-        "drugs": ["ibuprofen (if no contraindications)", "paracetamol"] if risk != "high" else ["paracetamol"],
+        "drugs": ["paracetamol", "ibuprofen (if no contraindications)"] if risk != "high" else ["paracetamol"],
         "alternative_drugs": [],
         "safety_cautions": ["Use conservative symptomatic treatment and reassess if symptoms worsen or persist."],
         "procedures": ["supportive care", "clinical follow-up"],

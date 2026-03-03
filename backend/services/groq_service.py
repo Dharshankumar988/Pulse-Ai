@@ -53,6 +53,11 @@ def _default_symptom_output(symptoms: str) -> dict:
         severity = "moderate"
         risk = "medium"
         probability = 0.62
+    elif (("abdominal" in text or "abdomen" in text or "stomach" in text or "cramp" in text) and ("vomit" in text or "vomiting" in text or "nausea" in text)):
+        disease = "acute_gastrointestinal_syndrome_suspected"
+        severity = "high"
+        risk = "high"
+        probability = 0.74
     elif "cough" in text or "throat" in text or "sore throat" in text:
         disease = "upper_respiratory_tract_infection_suspected"
         severity = "moderate"
@@ -416,10 +421,13 @@ async def generate_text_recommendations_with_groq(condition: str, symptoms: str 
 
     def _default_drugs_for_text(symptom_or_condition: str) -> list[str]:
         combined = str(symptom_or_condition or "").lower()
+        gi_markers = {"abdominal", "abdomen", "stomach", "cramp", "cramps", "vomit", "vomiting", "nausea", "diarrhea"}
         pain_markers = {"pain", "hip", "back", "spine", "lumbar", "muscle", "joint", "sciatica"}
         respiratory_markers = {"cough", "throat", "cold", "sore throat"}
         gastric_markers = {"acidity", "gastric", "reflux", "heartburn"}
 
+        if any(marker in combined for marker in gi_markers):
+            return ["ondansetron (if no contraindications)", "pantoprazole", "paracetamol"]
         if any(marker in combined for marker in pain_markers):
             return ["ibuprofen (if no contraindications)", "paracetamol"]
         if any(marker in combined for marker in respiratory_markers):
