@@ -497,6 +497,16 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
                 except KnowledgeBaseError:
                     recommendation = None
 
+            if not recommendation:
+                try:
+                    recommendation = await generate_text_recommendations_with_groq(
+                        condition=condition_hint or "general_non_specific_finding",
+                        symptoms=f"{conversation_context} | current={symptom_input}".strip(" |"),
+                        risk_level="medium",
+                    )
+                except Exception:
+                    recommendation = None
+
             alt_response = _build_alternate_drug_response(condition_hint, recommendation)
             return {
                 "response_type": "chat",
@@ -521,6 +531,16 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
                 try:
                     recommendation = get_recommendations_for_disease(condition_hint, risk_level="high")
                 except KnowledgeBaseError:
+                    recommendation = None
+
+            if not recommendation:
+                try:
+                    recommendation = await generate_text_recommendations_with_groq(
+                        condition=condition_hint or "general_non_specific_finding",
+                        symptoms=f"{conversation_context} | current={symptom_input}".strip(" |"),
+                        risk_level="high",
+                    )
+                except Exception:
                     recommendation = None
 
             stronger_response = _build_stronger_drug_response(condition_hint, recommendation)
