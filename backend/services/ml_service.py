@@ -496,11 +496,144 @@ def _is_skin_symptom_hint(symptoms_hint: str | None) -> bool:
     return any(keyword in text for keyword in skin_keywords)
 
 
+def _is_radiology_symptom_hint(symptoms_hint: str | None) -> bool:
+    text = str(symptoms_hint or "").strip().lower()
+    if not text:
+        return False
+
+    radiology_keywords = {
+        "xray",
+        "x-ray",
+        "radiology",
+        "fracture",
+        "bone",
+        "ortho",
+        "orthopedic",
+        "tumor",
+        "mass",
+        "kidney stone",
+        "renal stone",
+        "ct",
+        "mri",
+    }
+    return any(keyword in text for keyword in radiology_keywords)
+
+
+def _looks_like_radiology_image(image_bytes: bytes) -> bool:
+    _ensure_ml_imports()
+    np_buffer = _np.frombuffer(image_bytes, dtype=_np.uint8)
+    decoded = _cv2.imdecode(np_buffer, _cv2.IMREAD_COLOR)
+    if decoded is None:
+        return False
+
+    hsv = _cv2.cvtColor(decoded, _cv2.COLOR_BGR2HSV)
+    saturation = hsv[:, :, 1].astype(_np.float32)
+    value = hsv[:, :, 2].astype(_np.float32)
+
+    low_saturation_ratio = float(_np.mean(saturation < 30.0))
+    contrast = float(_np.percentile(value, 95) - _np.percentile(value, 5))
+
+    b = decoded[:, :, 0].astype(_np.float32)
+    g = decoded[:, :, 1].astype(_np.float32)
+    r = decoded[:, :, 2].astype(_np.float32)
+    channel_diff_score = float(_np.mean(_np.abs(r - g) + _np.abs(g - b) + _np.abs(r - b)))
+
+    if low_saturation_ratio >= 0.90 and contrast >= 30.0:
+        return True
+    if channel_diff_score < 18.0 and contrast >= 30.0:
+        return True
+    return False
+
+
+def _is_generic_skin_label(label: str | None) -> bool:
+    normalized = str(label or "").strip().lower().replace("_", " ")
+    return normalized in {
+        "",
+        "unknown",
+        "unknown condition",
+        "unknown class",
+        "skin condition",
+        "benign skin finding",
+        "class 0",
+        "class 1",
+        "class 2",
+        "unclassified image finding",
+    }
+
+
+def _should_prefer_radiology_route(
+    *,
+    skin_label: str,
+    skin_score: float,
+    radiology_label: str,
+    radiology_score: float,
+    force_radiology_route: bool,
+    radiology_visual_hint: bool,
+) -> bool:
+    if force_radiology_route or radiology_visual_hint:
+        return True
+
+    if _is_unknown_label(radiology_label):
+        return False
+
+    if radiology_score >= 0.75:
+        return True
+
+    if radiology_score >= 0.60 and radiology_score >= (skin_score + 0.05):
+        return True
+
+    if _is_generic_skin_label(skin_label) and radiology_score >= 0.45:
+        return True
+
+    return False
+
+
+def _run_radiology_route(image_bytes: bytes, mode_label: str, note_reason: str) -> dict:
+    tasks: list[MLTask] = ["fracture", "tumor", "kidney_stone"]
+    candidates: list[dict] = []
+
+    for task in tasks:
+        try:
+            result = run_ml_inference(task, image_bytes)
+        except Exception as exc:
+            result = build_error_response(task, str(exc))
+        best = _best_prediction(result)
+        score = float(best.get("confidence", 0.0)) if best else 0.0
+        label = str((best or {}).get("label", "unknown_condition"))
+        candidates.append(
+            {
+                "task": task,
+                "score": score,
+                "label": label,
+                "is_unknown": _is_unknown_label(label),
+                "result": result,
+            }
+        )
+
+    candidates.sort(key=lambda item: (0 if item["is_unknown"] else 1, item["score"]), reverse=True)
+    best_choice = candidates[0]
+    best_task = str(best_choice["task"])
+    best_score = float(best_choice["score"])
+    best_result = best_choice["result"]
+    best_pred = _best_prediction(best_result)
+
+    return {
+        "mode": mode_label,
+        "task": best_task,
+        "condition": str((best_pred or {}).get("label", "unknown_condition")),
+        "confidence": best_score,
+        "raw": best_result,
+        "notes": note_reason,
+    }
+
+
 def run_routed_image_analysis(image_bytes: bytes, symptoms_hint: str | None = None) -> dict:
     mode = detect_image_color_mode(image_bytes)
     force_skin_route = _is_skin_symptom_hint(symptoms_hint)
+    force_radiology_route = _is_radiology_symptom_hint(symptoms_hint)
+    radiology_visual_hint = _looks_like_radiology_image(image_bytes)
 
-    if force_skin_route:
+    if force_skin_route and not force_radiology_route:
         skin_result = run_ml_inference("skin_classification", image_bytes)
         skin_pred = _best_prediction(skin_result)
         skin_score = float((skin_pred or {}).get("confidence", 0.0))
@@ -514,52 +647,51 @@ def run_routed_image_analysis(image_bytes: bytes, symptoms_hint: str | None = No
         }
 
     if mode == "grayscale":
-        tasks: list[MLTask] = ["fracture", "tumor", "kidney_stone"]
-        candidates: list[dict] = []
-
-        for task in tasks:
-            try:
-                result = run_ml_inference(task, image_bytes)
-            except Exception as exc:
-                result = build_error_response(task, str(exc))
-            best = _best_prediction(result)
-            score = float(best.get("confidence", 0.0)) if best else 0.0
-            label = str((best or {}).get("label", "unknown_condition"))
-            candidates.append(
-                {
-                    "task": task,
-                    "score": score,
-                    "label": label,
-                    "is_unknown": _is_unknown_label(label),
-                    "result": result,
-                }
-            )
-
-        candidates.sort(key=lambda item: (0 if item["is_unknown"] else 1, item["score"]), reverse=True)
-        best_choice = candidates[0]
-        best_task = str(best_choice["task"])
-        best_score = float(best_choice["score"])
-        best_result = best_choice["result"]
-        best_pred = _best_prediction(best_result)
-
-        return {
-            "mode": "grayscale",
-            "task": best_task,
-            "condition": str((best_pred or {}).get("label", "unknown_condition")),
-            "confidence": best_score,
-            "raw": best_result,
-            "notes": "Routed to radiology set (fracture, tumor, kidney stone) because image appears grayscale.",
-        }
+        return _run_radiology_route(
+            image_bytes,
+            mode_label="grayscale",
+            note_reason="Routed to radiology set (fracture, tumor, kidney stone) because image appears grayscale.",
+        )
 
     skin_result = run_ml_inference("skin_classification", image_bytes)
     skin_pred = _best_prediction(skin_result)
+    skin_label = str((skin_pred or {}).get("label", "unknown_condition"))
     skin_score = float((skin_pred or {}).get("confidence", 0.0))
+
+    radiology_probe = _run_radiology_route(
+        image_bytes,
+        mode_label=mode,
+        note_reason="Radiology probe for color image routing decision.",
+    )
+    radiology_label = str(radiology_probe.get("condition", "unknown_condition"))
+    radiology_score = float(radiology_probe.get("confidence", 0.0) or 0.0)
+
+    if _should_prefer_radiology_route(
+        skin_label=skin_label,
+        skin_score=skin_score,
+        radiology_label=radiology_label,
+        radiology_score=radiology_score,
+        force_radiology_route=force_radiology_route,
+        radiology_visual_hint=radiology_visual_hint,
+    ):
+        reason = "Routed to radiology set after color-image comparison against skin model."
+        if force_radiology_route:
+            reason = "Routed to radiology set due to radiology symptom hints."
+        elif radiology_visual_hint:
+            reason = "Routed to radiology set because image appears radiology-like despite RGB channels."
+        radiology_probe["notes"] = (
+            f"{reason} (radiology_confidence={radiology_score:.3f}, skin_confidence={skin_score:.3f})"
+        )
+        return radiology_probe
 
     return {
         "mode": "color",
         "task": "skin_classification",
-        "condition": str((skin_pred or {}).get("label", "unknown_condition")),
+        "condition": skin_label,
         "confidence": skin_score,
         "raw": skin_result,
-        "notes": "Routed to EfficientNet skin model because image appears color.",
+        "notes": (
+            "Routed to EfficientNet skin model because color-image comparison did not meet radiology override "
+            f"(radiology_confidence={radiology_score:.3f}, skin_confidence={skin_score:.3f})."
+        ),
     }

@@ -10,6 +10,7 @@ from services.groq_service import (
     analyze_uncertain_image_with_groq,
     chat_followup_with_groq,
     generate_recommendations_with_groq,
+    generate_text_recommendations_with_groq,
 )
 from services.knowledge_base_service import KnowledgeBaseError, get_recommendations_for_disease
 from services.ml_service import MLServiceError, get_model_name_for_task, run_routed_image_analysis
@@ -46,6 +47,68 @@ def _build_veteran_doctor_note(condition: str, risk_level: str, symptoms: str) -
     )
 
 
+def _build_symptom_based_general_recommendation(symptoms: str, risk_level: str) -> dict:
+    text = str(symptoms or "").lower()
+    risk = str(risk_level or "medium").lower()
+
+    hip_pain_markers = {"hip pain", "hip", "groin pain"}
+    progressive_markers = {"increasing", "worsening", "getting worse", "progressive"}
+    persistent_markers = {"week", "weeks", "3 weeks", "2 weeks", "month", "months"}
+    if any(marker in text for marker in hip_pain_markers) and (
+        any(marker in text for marker in progressive_markers)
+        or any(marker in text for marker in persistent_markers)
+    ):
+        return {
+            "drugs": ["ibuprofen (if no contraindications)", "paracetamol"],
+            "alternative_drugs": ["naproxen (if clinician-approved and no contraindications)", "topical diclofenac gel"],
+            "safety_cautions": [
+                "Avoid NSAIDs in kidney disease, peptic ulcer, anticoagulant use, heart failure, or pregnancy unless clinician-approved.",
+                "Progressive hip pain over weeks needs in-person orthopedic/clinical evaluation rather than symptom-only treatment.",
+            ],
+            "procedures": ["activity modification and protected weight-bearing", "local heat/ice as tolerated", "early physiotherapy assessment"],
+            "tests": ["hip/pelvis X-ray", "targeted clinical exam for gait and range of motion", "inflammatory markers if clinically indicated"],
+            "guideline_sources": ["symptom_based_progressive_hip_pain_supportive_pathway"],
+            "source": "symptom_based_fallback",
+        }
+
+    if any(keyword in text for keyword in {"cough", "throat", "sore throat", "cold", "runny nose"}):
+        return {
+            "drugs": ["paracetamol", "cetirizine"],
+            "alternative_drugs": ["dextromethorphan (for dry cough)", "guaifenesin (for productive cough)"],
+            "safety_cautions": [
+                "Use only if no contraindications; avoid duplicate combination cold medicines.",
+                "Seek urgent care for breathlessness, chest pain, blood in sputum, persistent high fever, or worsening symptoms.",
+            ],
+            "procedures": ["warm saline gargles", "steam inhalation", "hydration and rest"],
+            "tests": ["clinical examination if symptoms persist beyond 1 week"],
+            "guideline_sources": ["symptom_based_general_supportive_care"],
+            "source": "symptom_based_fallback",
+        }
+
+    if any(keyword in text for keyword in {"headache", "body pain", "fever", "myalgia"}):
+        return {
+            "drugs": ["paracetamol"],
+            "alternative_drugs": ["ibuprofen (if no contraindication)"] if risk != "high" else [],
+            "safety_cautions": [
+                "Avoid NSAIDs in kidney disease, peptic ulcer, anticoagulant use, or pregnancy unless clinician-approved.",
+            ],
+            "procedures": ["oral hydration", "temperature monitoring", "rest"],
+            "tests": ["targeted evaluation if fever persists or red flags appear"],
+            "guideline_sources": ["symptom_based_general_supportive_care"],
+            "source": "symptom_based_fallback",
+        }
+
+    return {
+        "drugs": ["paracetamol"],
+        "alternative_drugs": [],
+        "safety_cautions": ["Use conservative symptomatic treatment and reassess if symptoms worsen or persist."],
+        "procedures": ["supportive care", "clinical follow-up"],
+        "tests": ["clinical reassessment if no improvement"],
+        "guideline_sources": ["symptom_based_general_supportive_care"],
+        "source": "symptom_based_fallback",
+    }
+
+
 def _is_unknown_condition(value: str | None) -> bool:
     normalized = str(value or "").strip().lower().replace("_", " ")
     return normalized in {
@@ -57,6 +120,7 @@ def _is_unknown_condition(value: str | None) -> bool:
         "class 1",
         "class 2",
         "general non specific finding",
+        "unclassified image finding",
     }
 
 
@@ -76,6 +140,11 @@ def _is_followup_chat(symptoms_text: str) -> bool:
         current_text = symptoms_text.split("current=")[-1].strip()
     # If there is no current text, it's not a follow-up
     if not current_text:
+        return False
+
+    # If the current message clearly looks like a fresh symptom report,
+    # do not route to conversational follow-up chat.
+    if _looks_like_symptom_report(current_text):
         return False
 
     lower = current_text.lower().strip()
@@ -343,6 +412,7 @@ def _harmonize_condition_with_detections(condition: str, confidence: float, dete
         "general_non_specific_finding",
         "general non specific finding",
         "unclassified_image_finding",
+        "unclassified image finding",
     }
 
     normalized_condition = str(condition or "").strip().lower().replace("_", " ")
@@ -561,22 +631,14 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
             or confidence < 0.45
         )
     ):
-        chat_text = await chat_followup_with_groq(symptom_input, conversation_context)
-        return {
-            "response_type": "chat",
-            "chat_response": chat_text,
-            "condition": "",
-            "confidence": 0.0,
-            "risk_level": "low",
-            "recommendation": {},
-            "notes": "Conversational response used for non-specific text-only input.",
-            "needs_image": False,
-            "needs_symptoms": False,
-            "follow_up_questions": [],
-            "detections": [],
-            "image_width": None,
-            "image_height": None,
-        }
+        # Keep structured analysis mode for symptom reports even when confidence is low,
+        # rather than downgrading to conversational chat output.
+        if not symptom_condition:
+            symptom_condition = "respiratory_symptom_complex" if any(
+                keyword in symptom_input.lower() for keyword in {"cough", "throat", "sore throat", "fever", "cold"}
+            ) else "general_non_specific_finding"
+        condition = symptom_condition or condition or "general_non_specific_finding"
+        confidence = max(confidence, 0.45)
 
     normalized_image_condition = str(image_condition or "").strip().lower().replace("_", " ")
     skin_non_specific_labels = {
@@ -604,7 +666,7 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
         )
     )
 
-    force_groq_for_rgb = has_image and image_mode == "color"
+    force_groq_for_rgb = has_image and image_mode == "color" and routed_task == "skin_classification"
 
     fallback_used = False
     if has_image and (
@@ -635,7 +697,12 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
         condition = "unclassified_image_finding"
         fallback_used = True
 
-    if has_image and image_mode == "color" and condition in {"unknown_condition", "general_non_specific_finding", "", "class_0", "class_1", "class_2"}:
+    if (
+        has_image
+        and image_mode == "color"
+        and routed_task == "skin_classification"
+        and condition in {"unknown_condition", "general_non_specific_finding", "", "class_0", "class_1", "class_2"}
+    ):
         condition = "skin condition"
 
     if has_image and image_mode == "grayscale":
@@ -652,28 +719,53 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
     else:
         risk_level = _risk_from_confidence(confidence)
 
-    try:
-        recommendation = get_recommendations_for_disease(condition, risk_level=risk_level)
-    except KnowledgeBaseError:
+    recommendation = None
+    prefer_groq_text = has_symptom_text and not has_image and (
+        _is_unknown_condition(condition)
+        or condition in {"general_non_specific_finding", "non-specific condition", "insufficient symptom data"}
+        or confidence < 0.6
+    )
+
+    if prefer_groq_text:
         try:
-            if has_image:
-                recommendation = await generate_recommendations_with_groq(
-                    image_bytes=image_bytes,
-                    condition=condition,
-                    symptoms=symptom_input if has_symptom_text else None,
-                )
-            else:
-                raise KnowledgeBaseError("No grounded mapping for non-image condition")
+            recommendation = await generate_text_recommendations_with_groq(
+                condition=condition,
+                symptoms=symptom_input if has_symptom_text else None,
+                risk_level=risk_level,
+            )
         except Exception:
-            recommendation = {
-                "drugs": [],
-                "alternative_drugs": [],
-                "safety_cautions": ["No medication suggestion without condition-specific guideline match."],
-                "procedures": ["clinical reassessment"],
-                "tests": ["targeted diagnostic evaluation"],
-                "guideline_sources": ["No matched guideline mapping"],
-                "source": "knowledge_base_fallback",
-            }
+            recommendation = None
+
+    if recommendation is None:
+        try:
+            recommendation = get_recommendations_for_disease(condition, risk_level=risk_level)
+        except KnowledgeBaseError:
+            try:
+                if has_image:
+                    recommendation = await generate_recommendations_with_groq(
+                        image_bytes=image_bytes,
+                        condition=condition,
+                        symptoms=symptom_input if has_symptom_text else None,
+                    )
+                else:
+                    recommendation = await generate_text_recommendations_with_groq(
+                        condition=condition,
+                        symptoms=symptom_input if has_symptom_text else None,
+                        risk_level=risk_level,
+                    )
+            except Exception:
+                recommendation = {
+                    "drugs": [],
+                    "alternative_drugs": [],
+                    "safety_cautions": ["No medication suggestion without condition-specific guideline match."],
+                    "procedures": ["clinical reassessment"],
+                    "tests": ["targeted diagnostic evaluation"],
+                    "guideline_sources": ["No matched guideline mapping"],
+                    "source": "knowledge_base_fallback",
+                }
+
+    if has_symptom_text and (not recommendation.get("drugs")):
+        recommendation = _build_symptom_based_general_recommendation(symptom_input, risk_level)
 
     drugs = recommendation.get("drugs") or []
     if isinstance(drugs, list) and drugs:

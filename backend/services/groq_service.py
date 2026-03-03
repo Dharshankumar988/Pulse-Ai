@@ -16,6 +16,7 @@ class GroqServiceError(RuntimeError):
 _SYMPTOM_CACHE: dict[str, tuple[float, dict]] = {}
 _UNCERTAINTY_CACHE: dict[str, tuple[float, dict]] = {}
 _CHAT_PROMPT_VERSION = "v5"
+_SYMPTOM_PROMPT_VERSION = "v2"
 
 
 def _safe_float(value, default: float = 0.0) -> float:
@@ -52,6 +53,11 @@ def _default_symptom_output(symptoms: str) -> dict:
         severity = "moderate"
         risk = "medium"
         probability = 0.62
+    elif "cough" in text or "throat" in text or "sore throat" in text:
+        disease = "upper_respiratory_tract_infection_suspected"
+        severity = "moderate"
+        risk = "medium"
+        probability = 0.64
 
     return {
         "disease": disease,
@@ -318,6 +324,110 @@ async def generate_recommendations_with_groq(image_bytes: bytes, condition: str,
     }
 
 
+async def generate_text_recommendations_with_groq(condition: str, symptoms: str | None, risk_level: str | None = None) -> dict:
+    api_key = settings.groq_api_key
+    if not api_key:
+        raise GroqServiceError("Groq API key missing")
+
+    web_context = await web_search(f"clinical triage recommendations and supportive care for: {symptoms or condition}")
+    web_context_text = web_context or "No external web snippet available. Use conservative, guideline-style clinical reasoning."
+
+    prompt = (
+        "You are Pulse, a physician-facing clinical assistant. "
+        "Return ONLY valid JSON using this exact schema: "
+        "{"
+        "\"disease_key\": string,"
+        "\"drugs\": string[] (include at least one conservative symptomatic first-line option unless contraindicated),"
+        "\"alternative_drugs\": string[],"
+        "\"safety_cautions\": string[],"
+        "\"procedures\": string[],"
+        "\"tests\": string[],"
+        "\"doctor_note\": string (max 90 words, practical and safety-focused),"
+        "\"source\": \"groq\""
+        "}. "
+        "Keep recommendations conservative, avoid high-risk medications without context, and include red-flag escalation advice in safety_cautions. "
+        f"Condition hint: {condition or 'general_non_specific_finding'}. "
+        f"Risk level: {risk_level or 'medium'}. "
+        f"Symptoms: {symptoms or 'not provided'}. "
+        f"Web context: {web_context_text}"
+    )
+
+    payload = {
+        "model": settings.groq_model,
+        "temperature": 0.15,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": "You produce concise physician-facing recommendation JSON only."},
+            {"role": "user", "content": prompt},
+        ],
+    }
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    async def _request_and_parse(request_payload: dict) -> dict:
+        timeout = httpx.Timeout(20.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers=headers,
+                json=request_payload,
+            )
+            response.raise_for_status()
+
+        data = response.json()
+        content = data["choices"][0]["message"]["content"]
+        return _extract_json(content)
+
+    try:
+        parsed = await _request_and_parse(payload)
+    except Exception:
+        retry_payload = {
+            "model": settings.groq_model,
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "Return JSON only. No prose. Schema keys required: disease_key, drugs, alternative_drugs, safety_cautions, procedures, tests, doctor_note, source.",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Return strict JSON only for physician-facing supportive recommendations. "
+                        f"Condition: {condition or 'general_non_specific_finding'}. "
+                        f"Risk: {risk_level or 'medium'}. "
+                        f"Symptoms: {symptoms or 'not provided'}. "
+                        f"Web: {web_context_text}"
+                    ),
+                },
+            ],
+        }
+        parsed = await _request_and_parse(retry_payload)
+
+    def _as_list(value):
+        if not isinstance(value, list):
+            return []
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    drugs = _as_list(parsed.get("drugs"))
+    if not drugs:
+        drugs = ["paracetamol (if no contraindications)"]
+
+    return {
+        "disease_key": str(parsed.get("disease_key", (condition or "general_non_specific_finding"))).strip().lower().replace(" ", "_"),
+        "drugs": drugs,
+        "alternative_drugs": _as_list(parsed.get("alternative_drugs")),
+        "safety_cautions": _as_list(parsed.get("safety_cautions")),
+        "procedures": _as_list(parsed.get("procedures")),
+        "tests": _as_list(parsed.get("tests")),
+        "doctor_note": str(parsed.get("doctor_note", "")).strip(),
+        "source": str(parsed.get("source", "groq")).strip() or "groq",
+    }
+
+
 async def analyze_symptoms_with_groq(symptoms: str) -> dict:
     normalized_symptoms = _normalize_symptoms(symptoms)
     if not normalized_symptoms:
@@ -333,15 +443,19 @@ async def analyze_symptoms_with_groq(symptoms: str) -> dict:
             "source": "empty-input",
         }
 
-    cached = _cache_get(normalized_symptoms)
+    cache_key = f"symptom::{_SYMPTOM_PROMPT_VERSION}::{normalized_symptoms}"
+    cached = _cache_get(cache_key)
     if cached is not None:
         return {**cached, "source": "cache"}
 
     api_key = settings.groq_api_key
     if not api_key:
         fallback = _default_symptom_output(symptoms)
-        _cache_set(normalized_symptoms, fallback)
+        _cache_set(cache_key, fallback)
         return fallback
+
+    web_context = await web_search(f"medical differential and triage guidance for: {symptoms}")
+    web_context_text = web_context or "No web snippets available; use conservative clinical triage reasoning."
 
     prompt = (
         "You are Pulse, a medical triage assistant for physician users. Given symptoms, return ONLY valid JSON and no markdown. "
@@ -359,6 +473,8 @@ async def analyze_symptoms_with_groq(symptoms: str) -> dict:
         "\"summary\": string (max 30 words),"
         "\"source\": \"groq\""
         "}."
+        "\nWeb context (latest snippets; prioritize higher-confidence consensus and note uncertainty when conflicting): "
+        f"{web_context_text}"
         "\nSymptoms: "
         f"{symptoms}"
     )
@@ -392,12 +508,18 @@ async def analyze_symptoms_with_groq(symptoms: str) -> dict:
         content = data["choices"][0]["message"]["content"]
         parsed = _extract_json(content)
         structured = _normalize_structured_output(parsed)
-        _cache_set(normalized_symptoms, structured)
+        if web_context and structured.get("source") == "groq":
+            structured["source"] = "groq_web"
+        _cache_set(cache_key, structured)
         return structured
     except Exception as exc:
         fallback = _default_symptom_output(symptoms)
         fallback["summary"] = f"Groq unavailable, fallback used: {exc}"
-        _cache_set(normalized_symptoms, fallback)
+        if web_context:
+            fallback["clinical_reasoning"] = (
+                f"Rule-based fallback with web context support. Snippets: {web_context_text[:300]}"
+            )
+        _cache_set(cache_key, fallback)
         return fallback
 
 

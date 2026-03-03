@@ -1,5 +1,16 @@
 # Pulse — Backend API
 
+## Quick Deploy (Hugging Face Spaces)
+
+Use the click-by-click guide in `README_HF_SPACES.md`.
+
+Required deployment artifacts already included in this folder:
+
+- `Dockerfile`
+- `.dockerignore`
+
+For Space runtime, configure `sdk: docker` and `app_port: 7860` in the Space repo `README.md` front matter.
+
 ## Folder Structure
 
 ```
