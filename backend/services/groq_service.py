@@ -337,6 +337,7 @@ async def generate_text_recommendations_with_groq(condition: str, symptoms: str 
         "Return ONLY valid JSON using this exact schema: "
         "{"
         "\"disease_key\": string,"
+        "\"primary_drug\": string,"
         "\"drugs\": string[] (include at least one conservative symptomatic first-line option unless contraindicated),"
         "\"alternative_drugs\": string[],"
         "\"safety_cautions\": string[],"
@@ -345,6 +346,7 @@ async def generate_text_recommendations_with_groq(condition: str, symptoms: str 
         "\"doctor_note\": string (max 90 words, practical and safety-focused),"
         "\"source\": \"groq\""
         "}. "
+        "The most apt drug must be in primary_drug and also be the first item in drugs. "
         "Keep recommendations conservative, avoid high-risk medications without context, and include red-flag escalation advice in safety_cautions. "
         f"Condition hint: {condition or 'general_non_specific_finding'}. "
         f"Risk level: {risk_level or 'medium'}. "
@@ -391,7 +393,7 @@ async def generate_text_recommendations_with_groq(condition: str, symptoms: str 
             "messages": [
                 {
                     "role": "system",
-                    "content": "Return JSON only. No prose. Schema keys required: disease_key, drugs, alternative_drugs, safety_cautions, procedures, tests, doctor_note, source.",
+                    "content": "Return JSON only. No prose. Schema keys required: disease_key, primary_drug, drugs, alternative_drugs, safety_cautions, procedures, tests, doctor_note, source.",
                 },
                 {
                     "role": "user",
@@ -412,12 +414,30 @@ async def generate_text_recommendations_with_groq(condition: str, symptoms: str 
             return []
         return [str(item).strip() for item in value if str(item).strip()]
 
+    def _default_drugs_for_text(symptom_or_condition: str) -> list[str]:
+        combined = str(symptom_or_condition or "").lower()
+        pain_markers = {"pain", "hip", "back", "spine", "lumbar", "muscle", "joint", "sciatica"}
+        respiratory_markers = {"cough", "throat", "cold", "sore throat"}
+        gastric_markers = {"acidity", "gastric", "reflux", "heartburn"}
+
+        if any(marker in combined for marker in pain_markers):
+            return ["ibuprofen (if no contraindications)", "paracetamol"]
+        if any(marker in combined for marker in respiratory_markers):
+            return ["cetirizine", "paracetamol"]
+        if any(marker in combined for marker in gastric_markers):
+            return ["pantoprazole", "antacid"]
+        return ["ibuprofen (if no contraindications)", "paracetamol"]
+
+    primary_drug = str(parsed.get("primary_drug", "")).strip()
     drugs = _as_list(parsed.get("drugs"))
+    if primary_drug:
+        drugs = [primary_drug, *[item for item in drugs if item.lower() != primary_drug.lower()]]
     if not drugs:
-        drugs = ["paracetamol (if no contraindications)"]
+        drugs = _default_drugs_for_text(f"{condition or ''} {symptoms or ''}")
 
     return {
         "disease_key": str(parsed.get("disease_key", (condition or "general_non_specific_finding"))).strip().lower().replace(" ", "_"),
+        "primary_drug": primary_drug or drugs[0],
         "drugs": drugs,
         "alternative_drugs": _as_list(parsed.get("alternative_drugs")),
         "safety_cautions": _as_list(parsed.get("safety_cautions")),

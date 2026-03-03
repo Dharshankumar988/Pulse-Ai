@@ -51,6 +51,22 @@ def _build_symptom_based_general_recommendation(symptoms: str, risk_level: str) 
     text = str(symptoms or "").lower()
     risk = str(risk_level or "medium").lower()
 
+    severe_pain_markers = {"severe", "very severe", "cannot walk", "can not walk", "unable to walk", "worsening", "increasing"}
+    msk_markers = {"hip", "lower back", "lover back", "back pain", "spine", "spinal", "lumbar", "sciatica", "groin pain"}
+    if any(marker in text for marker in msk_markers) and any(marker in text for marker in severe_pain_markers):
+        return {
+            "drugs": ["ibuprofen (if no contraindications)", "naproxen (if clinician-approved)", "paracetamol"],
+            "alternative_drugs": ["topical diclofenac gel", "short-course muscle relaxant if clinically appropriate"],
+            "safety_cautions": [
+                "Avoid NSAIDs in kidney disease, peptic ulcer, anticoagulant use, heart failure, or pregnancy unless clinician-approved.",
+                "Seek urgent in-person care if weakness, numbness, bowel/bladder changes, fever, trauma, or progressive neurological symptoms are present.",
+            ],
+            "procedures": ["relative rest and activity modification", "heat/ice therapy", "targeted physiotherapy assessment"],
+            "tests": ["spine/hip clinical exam", "X-ray of affected region", "MRI if neurological deficits or persistent severe pain"],
+            "guideline_sources": ["symptom_based_severe_musculoskeletal_pain_supportive_pathway"],
+            "source": "symptom_based_fallback",
+        }
+
     hip_pain_markers = {"hip pain", "hip", "groin pain"}
     progressive_markers = {"increasing", "worsening", "getting worse", "progressive"}
     persistent_markers = {"week", "weeks", "3 weeks", "2 weeks", "month", "months"}
@@ -87,8 +103,8 @@ def _build_symptom_based_general_recommendation(symptoms: str, risk_level: str) 
 
     if any(keyword in text for keyword in {"headache", "body pain", "fever", "myalgia"}):
         return {
-            "drugs": ["paracetamol"],
-            "alternative_drugs": ["ibuprofen (if no contraindication)"] if risk != "high" else [],
+            "drugs": ["ibuprofen (if no contraindications)", "paracetamol"] if risk != "high" else ["paracetamol"],
+            "alternative_drugs": ["naproxen (if clinician-approved)"] if risk != "high" else [],
             "safety_cautions": [
                 "Avoid NSAIDs in kidney disease, peptic ulcer, anticoagulant use, or pregnancy unless clinician-approved.",
             ],
@@ -99,7 +115,7 @@ def _build_symptom_based_general_recommendation(symptoms: str, risk_level: str) 
         }
 
     return {
-        "drugs": ["paracetamol"],
+        "drugs": ["ibuprofen (if no contraindications)", "paracetamol"] if risk != "high" else ["paracetamol"],
         "alternative_drugs": [],
         "safety_cautions": ["Use conservative symptomatic treatment and reassess if symptoms worsen or persist."],
         "procedures": ["supportive care", "clinical follow-up"],
@@ -740,11 +756,7 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
         risk_level = _risk_from_confidence(confidence)
 
     recommendation = None
-    prefer_groq_text = has_symptom_text and not has_image and (
-        _is_unknown_condition(condition)
-        or condition in {"general_non_specific_finding", "non-specific condition", "insufficient symptom data"}
-        or confidence < 0.6
-    )
+    prefer_groq_text = has_symptom_text and not has_image
 
     if prefer_groq_text:
         try:
@@ -786,6 +798,11 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
 
     if has_symptom_text and (not recommendation.get("drugs")):
         recommendation = _build_symptom_based_general_recommendation(symptom_input, risk_level)
+
+    if has_symptom_text and not has_image:
+        suggested_condition = str(recommendation.get("disease_key", "")).strip().lower()
+        if suggested_condition:
+            condition = suggested_condition
 
     drugs = recommendation.get("drugs") or []
     if isinstance(drugs, list) and drugs:
