@@ -9,10 +9,23 @@ const TASK_COLORS = {
   tumor:               { box: '#f59e0b', bg: 'rgba(245,158,11,0.18)', text: '#fde68a' },
   kidney_stone:        { box: '#f97316', bg: 'rgba(249,115,22,0.18)', text: '#fdba74' },
   skin_classification: { box: '#14b8a6', bg: 'rgba(20,184,166,0.18)', text: '#5eead4' },
+  healthy:             { box: '#22c55e', bg: 'rgba(34,197,94,0.15)', text: '#86efac' },
   default:             { box: '#6366f1', bg: 'rgba(99,102,241,0.18)', text: '#a5b4fc' },
 };
 
-function getTaskColor(task) {
+/* Check if condition indicates healthy / no disease */
+function isHealthyCondition(condition) {
+  const lower = (condition || '').toLowerCase();
+  const healthyPatterns = [
+    'healthy', 'no abnormality', 'normal', 'no apparent',
+    'no visible', 'unremarkable', 'non-medical', 'no disease',
+    'no findings', 'no pathology',
+  ];
+  return healthyPatterns.some(p => lower.includes(p));
+}
+
+function getTaskColor(task, condition) {
+  if (condition && isHealthyCondition(condition)) return TASK_COLORS.healthy;
   return TASK_COLORS[task] || TASK_COLORS.default;
 }
 
@@ -70,7 +83,7 @@ export default function ImagePage() {
     const scaleX = dispW / origW;
     const scaleY = dispH / origH;
     const taskKey = result.routed_task || result.condition || '';
-    const colors = getTaskColor(taskKey);
+    const colors = getTaskColor(taskKey, result.condition);
 
     result.detections.forEach((det) => {
       if (!det.bbox || det.bbox.length < 4) return;
@@ -90,8 +103,11 @@ export default function ImagePage() {
       ctx.setLineDash(det.is_estimated ? [6, 4] : []);
       ctx.strokeRect(dx, dy, dw, dh);
 
-      // label
-      const label = `${det.label}  ${(det.confidence * 100).toFixed(1)}%`;
+      // label — show friendly text, hide confidence % for healthy results
+      const isHealthy = isHealthyCondition(det.label);
+      const label = isHealthy
+        ? `✓ ${det.label}`
+        : `${det.label}  ${(det.confidence * 100).toFixed(0)}%`;
       ctx.font = 'bold 12px Inter, system-ui, sans-serif';
       const tm = ctx.measureText(label);
       const lh = 20;
@@ -217,9 +233,9 @@ export default function ImagePage() {
                   <div className="absolute top-2 left-2 flex flex-col gap-1">
                     <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
                       style={{
-                        backgroundColor: getTaskColor(result.routed_task || '').bg,
-                        color: getTaskColor(result.routed_task || '').text,
-                        border: `1px solid ${getTaskColor(result.routed_task || '').box}40`,
+                        backgroundColor: getTaskColor(result.routed_task || '', result.condition).bg,
+                        color: getTaskColor(result.routed_task || '', result.condition).text,
+                        border: `1px solid ${getTaskColor(result.routed_task || '', result.condition).box}40`,
                       }}>
                       {(result.routed_task || result.condition || '').replace(/_/g, ' ').toUpperCase()}
                     </span>
@@ -265,7 +281,7 @@ export default function ImagePage() {
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between items-center">
                   <span className="text-slate-400">Condition</span>
-                  <span className="font-semibold text-white">{result.condition?.replace(/_/g, ' ')}</span>
+                  <span className={`font-semibold ${isHealthyCondition(result.condition) ? 'text-green-400' : 'text-white'}`}>{result.condition?.replace(/_/g, ' ')}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-slate-400">Confidence</span>
@@ -273,7 +289,7 @@ export default function ImagePage() {
                     <div className="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
                       <div className="h-full rounded-full transition-all" style={{
                         width: `${(result.confidence || 0) * 100}%`,
-                        backgroundColor: getTaskColor(result.routed_task || '').box,
+                        backgroundColor: getTaskColor(result.routed_task || '', result.condition).box,
                       }} />
                     </div>
                     <span className="text-white text-xs">{(Number(result.confidence || 0) * 100).toFixed(1)}%</span>
@@ -290,15 +306,17 @@ export default function ImagePage() {
                     <p className="text-xs text-slate-400 mb-2">Detections ({result.detections.length})</p>
                     <div className="space-y-1.5">
                       {result.detections.map((det, i) => {
-                        const colors = getTaskColor(result.routed_task || '');
+                        const colors = getTaskColor(result.routed_task || '', result.condition);
+                        const detIsHealthy = isHealthyCondition(det.label);
                         return (
                           <div key={i} className="flex items-center justify-between gap-2 py-1 px-2 rounded-lg" style={{ backgroundColor: colors.bg }}>
                             <div className="flex items-center gap-2">
                               <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.box }} />
                               <span className="text-xs font-medium" style={{ color: colors.text }}>{det.label?.replace(/_/g, ' ')}</span>
-                              {det.is_estimated && <span className="text-[9px] text-slate-500 italic">estimated</span>}
+                              {det.is_estimated && !detIsHealthy && <span className="text-[9px] text-slate-500 italic">estimated</span>}
                             </div>
-                            <span className="text-xs text-white font-mono">{(det.confidence * 100).toFixed(1)}%</span>
+                            {!detIsHealthy && <span className="text-xs text-white font-mono">{(det.confidence * 100).toFixed(1)}%</span>}
+                            {detIsHealthy && <span className="text-xs text-green-400 font-medium">✓</span>}
                           </div>
                         );
                       })}

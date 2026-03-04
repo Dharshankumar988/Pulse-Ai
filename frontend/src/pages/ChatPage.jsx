@@ -64,7 +64,22 @@ function DetectionOverlayImage({ image, data, onOpenImage, mode = 'inline' }) {
   const imageHeight = Number(data?.image_height || 0);
   const condition = String(data?.condition || '').trim();
   const confidencePct = Math.round(Number(data?.confidence || 0) * 100);
-  const analysisLabel = condition ? `Analyzed ${condition} ${confidencePct}%` : '';
+  const isHealthyLike = (value) => {
+    const normalized = String(value || '').toLowerCase();
+    return [
+      'healthy',
+      'no abnormality',
+      'no apparent',
+      'normal',
+      'unremarkable',
+      'no disease',
+      'non-medical',
+      'no findings',
+    ].some((token) => normalized.includes(token));
+  };
+  const analysisLabel = condition
+    ? (isHealthyLike(condition) ? `Analyzed ${condition}` : `Analyzed ${condition} ${confidencePct}%`)
+    : '';
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
 
   if (!image) return null;
@@ -73,7 +88,12 @@ function DetectionOverlayImage({ image, data, onOpenImage, mode = 'inline' }) {
   const effectiveHeight = imageHeight || naturalSize.height;
 
   const overlayDetections = detections.length
-    ? detections
+    ? detections.map((det) => {
+        if (isHealthyLike(condition)) {
+          return { ...det, label: condition || 'Healthy / No abnormality detected' };
+        }
+        return det;
+      })
     : [{ label: condition || 'suspected_finding', confidence: Number(data?.confidence || 0), bbox: [0.2, 0.2, 0.8, 0.8], is_estimated: true }];
 
   const getBoxPercent = (bbox) => {
@@ -129,7 +149,9 @@ function DetectionOverlayImage({ image, data, onOpenImage, mode = 'inline' }) {
             style={box}
           >
             <div className="absolute -top-6 left-0 px-1.5 py-0.5 text-[10px] bg-amber-500/90 text-black rounded">
-              {d.label} {(Number(d.confidence || 0) * 100).toFixed(0)}%
+              {isHealthyLike(d.label)
+                ? `✓ ${d.label}`
+                : `${d.label} ${(Number(d.confidence || 0) * 100).toFixed(0)}%`}
             </div>
           </div>
         );

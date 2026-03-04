@@ -5,6 +5,8 @@ from PIL import Image
 
 from config.settings import settings
 from services.groq_service import (
+    _is_funny_or_nonsense,
+    _build_humorous_response,
     analyze_image_with_groq,
     analyze_symptoms_with_groq,
     analyze_uncertain_image_with_groq,
@@ -55,15 +57,15 @@ def _build_symptom_based_general_recommendation(symptoms: str, risk_level: str) 
     severe_markers = {"severe", "very severe", "persistent", "worsening", "increasing"}
     if any(marker in text for marker in gi_markers) and any(marker in text for marker in severe_markers):
         return {
-            "drugs": ["ondansetron (for vomiting, if no contraindications)", "pantoprazole", "paracetamol"],
-            "alternative_drugs": ["dicyclomine (if cramp-predominant and clinician-approved)", "oral rehydration salts"],
+            "drugs": ["ondansetron 4mg SL/PO (first-line antiemetic)", "pantoprazole 40mg OD (gastric protection)", "hyoscine butylbromide 20mg TDS (antispasmodic)"],
+            "alternative_drugs": ["metoclopramide 10mg TDS (prokinetic if no obstruction)", "oral rehydration salts"],
             "safety_cautions": [
-                "Avoid NSAID-first use in severe abdominal pain with vomiting unless clinician specifically indicates it.",
-                "Urgent in-person evaluation is needed for severe persistent abdominal pain, dehydration, blood in stool/vomit, high fever, or worsening symptoms.",
+                "Rule out surgical abdomen, appendicitis, and bowel obstruction before symptomatic treatment.",
+                "Urgent in-person evaluation for severe persistent abdominal pain, peritonism, blood in stool/vomit, or hemodynamic instability.",
             ],
-            "procedures": ["oral rehydration", "clear-fluid protocol", "close monitoring of urine output and hydration status"],
-            "tests": ["CBC and electrolytes", "abdominal examination", "targeted imaging/ultrasound if clinically indicated"],
-            "guideline_sources": ["symptom_based_severe_gastrointestinal_supportive_pathway"],
+            "procedures": ["IV fluid resuscitation if dehydrated", "nasogastric decompression if obstruction suspected", "close monitoring"],
+            "tests": ["CBC, CMP, lipase", "abdominal X-ray/CT if obstruction or perforation suspected", "urinalysis"],
+            "guideline_sources": ["ACG guidelines for acute GI management"],
             "source": "symptom_based_fallback",
         }
 
@@ -71,15 +73,15 @@ def _build_symptom_based_general_recommendation(symptoms: str, risk_level: str) 
     msk_markers = {"hip", "lower back", "lover back", "back pain", "spine", "spinal", "lumbar", "sciatica", "groin pain"}
     if any(marker in text for marker in msk_markers) and any(marker in text for marker in severe_pain_markers):
         return {
-            "drugs": ["ibuprofen (if no contraindications)", "naproxen (if clinician-approved)", "paracetamol"],
-            "alternative_drugs": ["topical diclofenac gel", "short-course muscle relaxant if clinically appropriate"],
+            "drugs": ["naproxen 500mg BD (sustained NSAID analgesia)", "cyclobenzaprine 10mg TDS (muscle relaxant if spasm)"],
+            "alternative_drugs": ["diclofenac 75mg BD (alternative NSAID)", "pregabalin 75mg BD (if neuropathic component)", "topical diclofenac gel"],
             "safety_cautions": [
-                "Avoid NSAIDs in kidney disease, peptic ulcer, anticoagulant use, heart failure, or pregnancy unless clinician-approved.",
-                "Seek urgent in-person care if weakness, numbness, bowel/bladder changes, fever, trauma, or progressive neurological symptoms are present.",
+                "Avoid NSAIDs in kidney disease, peptic ulcer, anticoagulant use, heart failure, or pregnancy.",
+                "Urgent imaging and referral for red flags: cauda equina symptoms, progressive weakness, bowel/bladder changes, fever, or trauma history.",
             ],
-            "procedures": ["relative rest and activity modification", "heat/ice therapy", "targeted physiotherapy assessment"],
-            "tests": ["spine/hip clinical exam", "X-ray of affected region", "MRI if neurological deficits or persistent severe pain"],
-            "guideline_sources": ["symptom_based_severe_musculoskeletal_pain_supportive_pathway"],
+            "procedures": ["activity modification and graded return", "heat/ice therapy", "physiotherapy referral"],
+            "tests": ["spine/hip X-ray", "MRI if neurological deficits or persistent severe pain >6 weeks", "inflammatory markers if systemic symptoms"],
+            "guideline_sources": ["NICE low back pain guidelines", "ACP clinical practice guidelines"],
             "source": "symptom_based_fallback",
         }
 
@@ -91,52 +93,99 @@ def _build_symptom_based_general_recommendation(symptoms: str, risk_level: str) 
         or any(marker in text for marker in persistent_markers)
     ):
         return {
-            "drugs": ["ibuprofen (if no contraindications)", "paracetamol"],
-            "alternative_drugs": ["naproxen (if clinician-approved and no contraindications)", "topical diclofenac gel"],
+            "drugs": ["naproxen 500mg BD (NSAID for inflammatory pain)", "paracetamol 1g QDS (adjunct analgesia)"],
+            "alternative_drugs": ["celecoxib 200mg OD (COX-2 selective if GI risk)", "tramadol 50mg TDS (if severe, short-course only)"],
             "safety_cautions": [
-                "Avoid NSAIDs in kidney disease, peptic ulcer, anticoagulant use, heart failure, or pregnancy unless clinician-approved.",
-                "Progressive hip pain over weeks needs in-person orthopedic/clinical evaluation rather than symptom-only treatment.",
+                "Progressive hip pain over weeks warrants in-person orthopedic evaluation to rule out AVN, labral tear, or malignancy.",
+                "Check ESR/CRP to rule out inflammatory or infective cause.",
             ],
-            "procedures": ["activity modification and protected weight-bearing", "local heat/ice as tolerated", "early physiotherapy assessment"],
-            "tests": ["hip/pelvis X-ray", "targeted clinical exam for gait and range of motion", "inflammatory markers if clinically indicated"],
-            "guideline_sources": ["symptom_based_progressive_hip_pain_supportive_pathway"],
+            "procedures": ["protected weight-bearing", "physiotherapy assessment", "intra-articular injection if inflammatory confirmed"],
+            "tests": ["hip/pelvis X-ray AP and lateral", "MRI hip if X-ray normal but clinical suspicion high", "ESR, CRP, CBC"],
+            "guideline_sources": ["AAOS hip pain evaluation guidelines"],
+            "source": "symptom_based_fallback",
+        }
+
+    uti_markers = {"burn", "burning", "urin", "urinary", "frequency", "dysuria"}
+    if any(keyword in text for keyword in uti_markers) and ("pee" in text or "urin" in text):
+        return {
+            "drugs": ["nitrofurantoin 100mg BD x5 days (first-line uncomplicated UTI)", "phenazopyridine 200mg TDS x2d (bladder analgesic)"],
+            "alternative_drugs": ["trimethoprim-sulfamethoxazole DS BD x3d (if local resistance <20%)", "fosfomycin 3g single dose"],
+            "safety_cautions": [
+                "Obtain urine culture before antibiotics if recurrent, complicated, or male patient.",
+                "Urgent evaluation for pyelonephritis signs: fever, flank pain, rigors.",
+            ],
+            "procedures": ["adequate hydration", "void before and after intercourse"],
+            "tests": ["urinalysis with dipstick", "urine culture and sensitivity", "renal function if recurrent"],
+            "guideline_sources": ["IDSA guidelines for uncomplicated UTI"],
             "source": "symptom_based_fallback",
         }
 
     if any(keyword in text for keyword in {"cough", "throat", "sore throat", "cold", "runny nose"}):
+        is_bacterial = any(kw in text for kw in {"purulent", "green", "yellow", "10 day", "high fever", "39", "strep"})
+        if is_bacterial:
+            return {
+                "drugs": ["amoxicillin 500mg TDS x7-10d (if bacterial pharyngitis/sinusitis)", "azithromycin 500mg day1 then 250mg x4d (if penicillin allergy)"],
+                "alternative_drugs": ["amoxicillin-clavulanate 625mg TDS (if resistant or recurrent)", "doxycycline 100mg BD x7d"],
+                "safety_cautions": ["Confirm bacterial etiology with rapid strep test or clinical criteria before antibiotics."],
+                "procedures": ["warm saline gargles", "hydration and rest"],
+                "tests": ["rapid strep antigen test", "throat culture if negative rapid test", "CBC if systemic symptoms"],
+                "guideline_sources": ["NICE sore throat guidelines", "IDSA pharyngitis guidelines"],
+                "source": "symptom_based_fallback",
+            }
         return {
-            "drugs": ["paracetamol", "cetirizine"],
-            "alternative_drugs": ["dextromethorphan (for dry cough)", "guaifenesin (for productive cough)"],
+            "drugs": ["dextromethorphan 30mg QDS (antitussive for dry cough)", "guaifenesin 600mg BD (expectorant for productive cough)"],
+            "alternative_drugs": ["cetirizine 10mg OD (if allergic component)", "honey + warm fluids (evidence-based for cough)"],
             "safety_cautions": [
-                "Use only if no contraindications; avoid duplicate combination cold medicines.",
-                "Seek urgent care for breathlessness, chest pain, blood in sputum, persistent high fever, or worsening symptoms.",
+                "Seek urgent care for breathlessness, chest pain, hemoptysis, persistent high fever, or worsening after 7 days.",
             ],
-            "procedures": ["warm saline gargles", "steam inhalation", "hydration and rest"],
-            "tests": ["clinical examination if symptoms persist beyond 1 week"],
-            "guideline_sources": ["symptom_based_general_supportive_care"],
+            "procedures": ["steam inhalation", "warm saline gargles", "hydration and rest"],
+            "tests": ["chest X-ray if cough >3 weeks or red flags", "sputum culture if productive and persistent"],
+            "guideline_sources": ["BTS cough guidelines"],
             "source": "symptom_based_fallback",
         }
 
-    if any(keyword in text for keyword in {"headache", "body pain", "fever", "myalgia"}):
+    if any(keyword in text for keyword in {"headache", "migraine"}):
+        if "migraine" in text:
+            return {
+                "drugs": ["sumatriptan 50-100mg PO (first-line acute migraine)", "metoclopramide 10mg (adjunct antiemetic)"],
+                "alternative_drugs": ["rizatriptan 10mg (alternative triptan)", "naproxen 500mg (if triptan contraindicated)"],
+                "safety_cautions": ["Triptans contraindicated in uncontrolled hypertension, CAD, or hemiplegic migraine."],
+                "procedures": ["dark quiet room", "cold compress", "migraine diary for trigger identification"],
+                "tests": ["neuroimaging if atypical features, thunderclap onset, or new neurological signs"],
+                "guideline_sources": ["AHS migraine treatment guidelines"],
+                "source": "symptom_based_fallback",
+            }
         return {
-            "drugs": ["ibuprofen (if no contraindications)", "paracetamol"] if risk != "high" else ["paracetamol"],
-            "alternative_drugs": ["naproxen (if clinician-approved)"] if risk != "high" else [],
+            "drugs": ["paracetamol 1g QDS (first-line tension headache)", "naproxen 500mg BD (if NSAID not contraindicated)"],
+            "alternative_drugs": ["amitriptyline 10-25mg nocte (prophylaxis if frequent)"],
+            "safety_cautions": ["Rule out secondary causes: thunderclap onset, fever, neck stiffness, papilledema, new neuro deficits."],
+            "procedures": ["hydration", "stress management", "sleep hygiene"],
+            "tests": ["CT head if red flag features present"],
+            "guideline_sources": ["NICE headache guidelines"],
+            "source": "symptom_based_fallback",
+        }
+
+    if any(keyword in text for keyword in {"body pain", "fever", "myalgia"}):
+        return {
+            "drugs": ["paracetamol 1g QDS (antipyretic + analgesia)" if risk == "high" else "naproxen 500mg BD (anti-inflammatory analgesia)", "paracetamol 1g QDS (adjunct)"],
+            "alternative_drugs": ["ibuprofen 400mg TDS (alternative NSAID)" if risk != "high" else "codeine 30mg QDS (short-course if severe)"],
             "safety_cautions": [
-                "Avoid NSAIDs in kidney disease, peptic ulcer, anticoagulant use, or pregnancy unless clinician-approved.",
+                "Investigate cause of fever if >5 days, >39°C, or with localizing signs.",
             ],
             "procedures": ["oral hydration", "temperature monitoring", "rest"],
-            "tests": ["targeted evaluation if fever persists or red flags appear"],
-            "guideline_sources": ["symptom_based_general_supportive_care"],
+            "tests": ["CBC, ESR/CRP", "blood cultures if fever >39°C or rigors", "targeted evaluation based on localizing symptoms"],
+            "guideline_sources": ["WHO fever management"],
             "source": "symptom_based_fallback",
         }
 
+    # Generic fallback — but still not just paracetamol
     return {
-        "drugs": ["paracetamol", "ibuprofen (if no contraindications)"] if risk != "high" else ["paracetamol"],
+        "drugs": ["clinical assessment needed before specific drug recommendation"],
         "alternative_drugs": [],
-        "safety_cautions": ["Use conservative symptomatic treatment and reassess if symptoms worsen or persist."],
-        "procedures": ["supportive care", "clinical follow-up"],
-        "tests": ["clinical reassessment if no improvement"],
-        "guideline_sources": ["symptom_based_general_supportive_care"],
+        "safety_cautions": ["Insufficient symptom detail for targeted pharmacotherapy. Complete clinical assessment recommended."],
+        "procedures": ["focused clinical examination", "detailed history taking"],
+        "tests": ["basic bloods (CBC, CMP) if systemic symptoms", "targeted investigation based on clinical findings"],
+        "guideline_sources": ["general clinical assessment pathway"],
         "source": "symptom_based_fallback",
     }
 
@@ -154,6 +203,65 @@ def _is_unknown_condition(value: str | None) -> bool:
         "general non specific finding",
         "unclassified image finding",
     }
+
+
+def _is_healthy_or_no_disease(condition: str) -> bool:
+    """Detect if the final condition indicates no disease / healthy / normal."""
+    normalized = str(condition or "").strip().lower().replace("_", " ")
+    no_disease_patterns = [
+        "no apparent", "no visible", "no detectable", "no significant",
+        "no abnormality", "no anomaly", "no pathology", "no disease",
+        "normal", "healthy", "unremarkable", "no findings",
+        "non medical image", "not a medical image",
+    ]
+    return any(pattern in normalized for pattern in no_disease_patterns)
+
+
+def _friendly_healthy_label(condition: str) -> str:
+    """Convert a 'no apparent X' condition into a friendly display label."""
+    normalized = str(condition or "").strip().lower()
+    if "not a medical" in normalized or "non medical" in normalized:
+        return "Non-medical image"
+    if "no apparent" in normalized or "no visible" in normalized:
+        return "Healthy / No abnormality detected"
+    if "normal" in normalized or "unremarkable" in normalized:
+        return "Normal findings"
+    return "Healthy"
+
+
+def _reconcile_detections_with_condition(detections: list[dict], condition: str, confidence: float) -> list[dict]:
+    """Update detection labels to match the final Groq-corrected condition.
+    
+    When the AI determines 'no apparent disease' but ML model raw predictions
+    still say 'fungal infection 100%', this function corrects the labels.
+    """
+    if not detections:
+        return detections
+
+    if _is_healthy_or_no_disease(condition):
+        friendly = _friendly_healthy_label(condition)
+        return [
+            {
+                **det,
+                "label": friendly,
+                "confidence": confidence,
+            }
+            for det in detections
+        ]
+
+    # If Groq gave a specific condition that differs from ML raw label,
+    # update detection labels to match the final condition
+    final_condition_clean = str(condition or "").strip().replace("_", " ")
+    if final_condition_clean and not _is_unknown_condition(condition):
+        for det in detections:
+            raw_label = str(det.get("label", "")).strip().lower()
+            final_lower = final_condition_clean.lower()
+            # If the raw label is generic/different, update to the Groq-corrected one
+            if raw_label != final_lower and det.get("is_estimated", False):
+                det["label"] = final_condition_clean
+                det["confidence"] = confidence
+
+    return detections
 
 
 def _is_followup_chat(symptoms_text: str) -> bool:
@@ -463,6 +571,25 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
     current_message, conversation_context = _extract_current_and_context(cleaned_symptoms)
     symptom_input = (current_message or cleaned_symptoms).strip()
     has_symptom_text = bool(symptom_input)
+
+    # ---- HUMOR DETECTION (top-level, before any analysis) ----
+    if has_symptom_text and not has_image and _is_funny_or_nonsense(symptom_input):
+        humor = _build_humorous_response(symptom_input)
+        return {
+            "response_type": "chat",
+            "chat_response": humor["summary"],
+            "condition": "humor_detected",
+            "confidence": 0.0,
+            "risk_level": "low",
+            "recommendation": {},
+            "notes": "Humorous or non-medical prompt detected. Responded with wit.",
+            "needs_image": False,
+            "needs_symptoms": False,
+            "follow_up_questions": ["Got any real symptoms you'd like me to analyze?"],
+            "detections": [],
+            "image_width": None,
+            "image_height": None,
+        }
 
     if not has_image and not has_symptom_text:
         return {
@@ -806,8 +933,12 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
             except Exception:
                 recommendation = recommendation or None
 
+    # ALWAYS prefer Groq text recommendations when we have symptoms — this ensures
+    # we get AI-generated, condition-specific drug recommendations instead of static fallbacks.
     prefer_groq_text = has_symptom_text and (
         not has_image
+        or recommendation is None
+        or not recommendation.get("drugs")
         or fallback_used
         or confidence < 0.75
         or _is_unknown_condition(condition)
@@ -815,11 +946,32 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
 
     if prefer_groq_text:
         try:
-            recommendation = await generate_text_recommendations_with_groq(
+            groq_recommendation = await generate_text_recommendations_with_groq(
                 condition=condition,
                 symptoms=symptom_input if has_symptom_text else None,
                 risk_level=risk_level,
             )
+            # Only use Groq recommendation if it actually has specific drugs  
+            if groq_recommendation and groq_recommendation.get("drugs"):
+                recommendation = groq_recommendation
+        except Exception:
+            pass  # Keep existing recommendation if Groq fails
+
+    if recommendation is None:
+        # Try Groq one more time before falling back to static knowledge base
+        try:
+            if has_image:
+                recommendation = await generate_recommendations_with_groq(
+                    image_bytes=image_bytes,
+                    condition=condition,
+                    symptoms=symptom_input if has_symptom_text else None,
+                )
+            else:
+                recommendation = await generate_text_recommendations_with_groq(
+                    condition=condition,
+                    symptoms=symptom_input if has_symptom_text else None,
+                    risk_level=risk_level,
+                )
         except Exception:
             recommendation = None
 
@@ -827,32 +979,21 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
         try:
             recommendation = get_recommendations_for_disease(condition, risk_level=risk_level)
         except KnowledgeBaseError:
-            try:
-                if has_image:
-                    recommendation = await generate_recommendations_with_groq(
-                        image_bytes=image_bytes,
-                        condition=condition,
-                        symptoms=symptom_input if has_symptom_text else None,
-                    )
-                else:
-                    recommendation = await generate_text_recommendations_with_groq(
-                        condition=condition,
-                        symptoms=symptom_input if has_symptom_text else None,
-                        risk_level=risk_level,
-                    )
-            except Exception:
-                recommendation = {
-                    "drugs": [],
-                    "alternative_drugs": [],
-                    "safety_cautions": ["No medication suggestion without condition-specific guideline match."],
-                    "procedures": ["clinical reassessment"],
-                    "tests": ["targeted diagnostic evaluation"],
-                    "guideline_sources": ["No matched guideline mapping"],
-                    "source": "knowledge_base_fallback",
-                }
+            recommendation = {
+                "drugs": [],
+                "alternative_drugs": [],
+                "safety_cautions": ["No medication suggestion without condition-specific guideline match."],
+                "procedures": ["clinical reassessment"],
+                "tests": ["targeted diagnostic evaluation"],
+                "guideline_sources": ["No matched guideline mapping"],
+                "source": "knowledge_base_fallback",
+            }
 
-    if has_symptom_text and (not recommendation.get("drugs")):
-        recommendation = _build_symptom_based_general_recommendation(symptom_input, risk_level)
+    if has_symptom_text and (not recommendation.get("drugs") or recommendation.get("source") == "knowledge_base_fallback"):
+        # Last resort: use symptom-based recommendation but with specific drugs
+        symptom_rec = _build_symptom_based_general_recommendation(symptom_input, risk_level)
+        if symptom_rec.get("drugs"):
+            recommendation = symptom_rec
 
     if has_symptom_text and not has_image:
         suggested_condition = str(recommendation.get("disease_key", "")).strip().lower()
@@ -865,9 +1006,9 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
     drugs = recommendation.get("drugs") or []
     if isinstance(drugs, list) and drugs:
         recommendation["primary_drug"] = str(drugs[0])
-        recommendation["drugs"] = [str(item) for item in drugs[:2]]
+        recommendation["drugs"] = [str(item) for item in drugs[:4]]  # Allow up to 4 drugs for complex conditions
     else:
-        recommendation["primary_drug"] = "No drug recommendation without condition-specific evidence"
+        recommendation["primary_drug"] = "Clinical assessment needed before specific drug recommendation"
         recommendation["drugs"] = []
 
     recommendation["doctor_note"] = str(
@@ -888,9 +1029,13 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
     notes = " | ".join(notes_parts) if notes_parts else "Analysis completed."
 
     if has_image and not detections and image_width and image_height:
+        # Build a synthetic detection box — use the final (Groq-corrected) condition
+        display_label = condition or image_condition or "suspected_finding"
+        if _is_healthy_or_no_disease(display_label):
+            display_label = _friendly_healthy_label(display_label)
         detections = [
             {
-                "label": condition or image_condition or "suspected_finding",
+                "label": display_label,
                 "confidence": confidence,
                 "bbox": [
                     float(image_width * 0.2),
@@ -901,6 +1046,12 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
                 "is_estimated": True,
             }
         ]
+
+    # ── Reconcile detection labels with the final Groq-corrected condition ──
+    # This prevents the ML model's raw labels (e.g. "fungal infection 100%")
+    # from being shown when Groq has determined "No apparent fungal infection".
+    if has_image and detections:
+        detections = _reconcile_detections_with_condition(detections, condition, confidence)
 
     follow_up_questions: list[str] = []
     needs_image = False
@@ -921,10 +1072,16 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
 
     _model_name = get_model_name_for_task(routed_task) if routed_task else ""
 
+    # Clean up condition display for healthy/no-disease results
+    display_condition = condition or "general_non_specific_finding"
+    if _is_healthy_or_no_disease(display_condition):
+        display_condition = _friendly_healthy_label(display_condition)
+        risk_level = "low"
+
     return {
         "response_type": "analysis",
         "chat_response": "",
-        "condition": condition or "general_non_specific_finding",
+        "condition": display_condition,
         "confidence": confidence,
         "risk_level": risk_level,
         "recommendation": recommendation,
