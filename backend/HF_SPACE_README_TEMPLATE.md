@@ -8,11 +8,11 @@ app_port: 7860
 pinned: false
 ---
 
-# Pulse AI Backend (Hugging Face Space)
+# Pulse AI Backend
 
-This Space deploys the FastAPI backend from the `backend/` folder in this repository.
+FastAPI backend for Pulse AI deployed on Hugging Face Spaces using Docker.
 
-## Health endpoints
+## Health Check
 
 - `GET /`
 - `GET /api/v1/health`
