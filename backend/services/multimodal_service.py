@@ -49,6 +49,51 @@ def _build_veteran_doctor_note(condition: str, risk_level: str, symptoms: str) -
     )
 
 
+def _stringify_recommendation_item(item: object) -> str:
+    if isinstance(item, dict):
+        name = str(item.get("name") or item.get("drug") or "").strip()
+        drug_class = str(item.get("class") or item.get("drug_class") or "").strip()
+        dose = str(item.get("dose") or item.get("dosage") or "").strip()
+        route = str(item.get("route") or "").strip()
+
+        if name:
+            if drug_class and dose and route:
+                return f"{name}, a {drug_class.lower()}, can be given at {dose} via {route} route."
+            if drug_class and dose:
+                return f"{name}, a {drug_class.lower()}, is typically dosed at {dose}."
+            if drug_class and route:
+                return f"{name}, a {drug_class.lower()}, can be administered via {route} route."
+            if dose and route:
+                return f"{name} can be given at {dose} via {route} route."
+            if drug_class:
+                return f"{name} is a {drug_class.lower()}."
+            if dose:
+                return f"{name} is typically dosed at {dose}."
+            if route:
+                return f"{name} can be administered via {route} route."
+            return name
+
+        values = [str(value).strip() for value in item.values() if str(value).strip()]
+        return ", ".join(values)
+
+    return str(item).strip()
+
+
+def _normalize_recommendation_list(value: object, limit: int | None = None) -> list[str]:
+    if not isinstance(value, list):
+        return []
+
+    items: list[str] = []
+    for entry in value:
+        normalized = _stringify_recommendation_item(entry)
+        if normalized:
+            items.append(normalized)
+
+    if limit is not None:
+        return items[:limit]
+    return items
+
+
 def _build_symptom_based_general_recommendation(symptoms: str, risk_level: str) -> dict:
     text = str(symptoms or "").lower()
     risk = str(risk_level or "medium").lower()
@@ -1003,13 +1048,19 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
     normalized_condition_key = str(condition or "general_non_specific_finding").strip().lower().replace(" ", "_")
     recommendation["disease_key"] = normalized_condition_key
 
-    drugs = recommendation.get("drugs") or []
-    if isinstance(drugs, list) and drugs:
-        recommendation["primary_drug"] = str(drugs[0])
-        recommendation["drugs"] = [str(item) for item in drugs[:4]]  # Allow up to 4 drugs for complex conditions
+    drugs = _normalize_recommendation_list(recommendation.get("drugs"), limit=4)
+    if drugs:
+        primary_drug = _stringify_recommendation_item(recommendation.get("primary_drug", "")).strip()
+        recommendation["primary_drug"] = primary_drug or drugs[0]
+        recommendation["drugs"] = drugs  # Allow up to 4 drugs for complex conditions
     else:
         recommendation["primary_drug"] = "Clinical assessment needed before specific drug recommendation"
         recommendation["drugs"] = []
+
+    recommendation["alternative_drugs"] = _normalize_recommendation_list(recommendation.get("alternative_drugs"))
+    recommendation["safety_cautions"] = _normalize_recommendation_list(recommendation.get("safety_cautions"))
+    recommendation["procedures"] = _normalize_recommendation_list(recommendation.get("procedures"))
+    recommendation["tests"] = _normalize_recommendation_list(recommendation.get("tests"))
 
     recommendation["doctor_note"] = str(
         recommendation.get("doctor_note")

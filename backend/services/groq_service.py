@@ -208,6 +208,52 @@ def _cache_set(key: str, payload: dict) -> None:
     _SYMPTOM_CACHE[key] = (time.time(), payload)
 
 
+def _stringify_recommendation_item(item: object) -> str:
+    if isinstance(item, dict):
+        name = str(item.get("name") or item.get("drug") or "").strip()
+        drug_class = str(item.get("class") or item.get("drug_class") or "").strip()
+        dose = str(item.get("dose") or item.get("dosage") or "").strip()
+        route = str(item.get("route") or "").strip()
+
+        if name:
+            if drug_class and dose and route:
+                return f"{name}, a {drug_class.lower()}, can be given at {dose} via {route} route."
+            if drug_class and dose:
+                return f"{name}, a {drug_class.lower()}, is typically dosed at {dose}."
+            if drug_class and route:
+                return f"{name}, a {drug_class.lower()}, can be administered via {route} route."
+            if dose and route:
+                return f"{name} can be given at {dose} via {route} route."
+            if drug_class:
+                return f"{name} is a {drug_class.lower()}."
+            if dose:
+                return f"{name} is typically dosed at {dose}."
+            if route:
+                return f"{name} can be administered via {route} route."
+            return name
+
+        # If shape is unknown, keep useful values but avoid raw dict string output.
+        values = [str(value).strip() for value in item.values() if str(value).strip()]
+        if values:
+            return ", ".join(values)
+        return ""
+
+    text = str(item).strip()
+    return text
+
+
+def _as_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+
+    items: list[str] = []
+    for entry in value:
+        normalized = _stringify_recommendation_item(entry)
+        if normalized:
+            items.append(normalized)
+    return items
+
+
 def _uncertainty_cache_get(key: str) -> dict | None:
     ttl = max(1, settings.groq_cache_ttl_seconds)
     cached = _UNCERTAINTY_CACHE.get(key)
@@ -430,16 +476,11 @@ async def generate_recommendations_with_groq(image_bytes: bytes, condition: str,
         }
         parsed = await _request_and_parse(text_only_payload)
 
-    def _as_list(value):
-        if not isinstance(value, list):
-            return []
-        return [str(item) for item in value if str(item).strip()]
-
     return {
         "disease_key": str(parsed.get("disease_key", (condition or "general_non_specific_finding"))).strip().lower().replace(" ", "_"),
-        "drugs": _as_list(parsed.get("drugs")),
-        "procedures": _as_list(parsed.get("procedures")),
-        "tests": _as_list(parsed.get("tests")),
+        "drugs": _as_string_list(parsed.get("drugs")),
+        "procedures": _as_string_list(parsed.get("procedures")),
+        "tests": _as_string_list(parsed.get("tests")),
         "doctor_note": str(parsed.get("doctor_note", "")).strip(),
         "source": str(parsed.get("source", "groq_vision")),
     }
@@ -543,11 +584,6 @@ async def generate_text_recommendations_with_groq(condition: str, symptoms: str 
         }
         parsed = await _request_and_parse(retry_payload)
 
-    def _as_list(value):
-        if not isinstance(value, list):
-            return []
-        return [str(item).strip() for item in value if str(item).strip()]
-
     def _default_drugs_for_text(symptom_or_condition: str) -> list[str]:
         combined = str(symptom_or_condition or "").lower()
         gi_markers = {"abdominal", "abdomen", "stomach", "cramp", "cramps", "vomit", "vomiting", "nausea", "diarrhea"}
@@ -594,8 +630,8 @@ async def generate_text_recommendations_with_groq(condition: str, symptoms: str 
             return ["pantoprazole 40mg OD (PPI)", "ranitidine 150mg BD (H2 blocker alternative)"]
         return ["clinical assessment needed before drug recommendation"]
 
-    primary_drug = str(parsed.get("primary_drug", "")).strip()
-    drugs = _as_list(parsed.get("drugs"))
+    primary_drug = _stringify_recommendation_item(parsed.get("primary_drug", "")).strip()
+    drugs = _as_string_list(parsed.get("drugs"))
     if primary_drug:
         drugs = [primary_drug, *[item for item in drugs if item.lower() != primary_drug.lower()]]
     if not drugs:
@@ -605,10 +641,10 @@ async def generate_text_recommendations_with_groq(condition: str, symptoms: str 
         "disease_key": str(parsed.get("disease_key", (condition or "general_non_specific_finding"))).strip().lower().replace(" ", "_"),
         "primary_drug": primary_drug or drugs[0],
         "drugs": drugs,
-        "alternative_drugs": _as_list(parsed.get("alternative_drugs")),
-        "safety_cautions": _as_list(parsed.get("safety_cautions")),
-        "procedures": _as_list(parsed.get("procedures")),
-        "tests": _as_list(parsed.get("tests")),
+        "alternative_drugs": _as_string_list(parsed.get("alternative_drugs")),
+        "safety_cautions": _as_string_list(parsed.get("safety_cautions")),
+        "procedures": _as_string_list(parsed.get("procedures")),
+        "tests": _as_string_list(parsed.get("tests")),
         "doctor_note": str(parsed.get("doctor_note", "")).strip(),
         "source": str(parsed.get("source", "groq")).strip() or "groq",
     }
