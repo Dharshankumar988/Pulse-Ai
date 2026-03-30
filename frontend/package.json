@@ -1,0 +1,10 @@
+{
+  "name": "pulse-ai-frontend-static",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Prebuilt static frontend bundle for Vercel",
+  "scripts": {
+    "build": "echo Prebuilt frontend/dist in use",
+    "dev": "echo Source project not present; serve dist instead"
+  }
+}
