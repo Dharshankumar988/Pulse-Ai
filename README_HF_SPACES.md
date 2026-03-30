@@ -10,29 +10,19 @@ This guide deploys the backend from this `backend/` folder to Hugging Face Space
 4. Choose visibility (Public or Private).
 5. Click **Create Space**.
 
-## 2) Choose one deployment layout
+## 2) Push backend folder contents to the Space repo root
 
-### Option A (recommended): connect this whole repository to the Space
-
-This repository now includes a **root-level** `Dockerfile` and `README.md` configured for Hugging Face Docker Spaces.
-
-- In Hugging Face, connect/push this repository as-is.
-- The root Docker image automatically runs backend app from `backend/main.py`.
-- No folder reshuffling needed.
-
-### Option B: push only backend folder contents to the Space root
-
-If you prefer a backend-only Space repo, your Space root should contain files like:
+Your Space repo root should contain files like:
 
 - `main.py`
 - `requirements.txt`
 - `Dockerfile`
 - `config/`, `routers/`, `services/`, `middleware/`, `models/`, `knowledge/`, `dependencies/`
 
-Important for both options:
+Important:
 
 - Do not push `.venv`, `.env`, or `__pycache__`.
-- Keep Space SDK set to `docker`.
+- This backend already includes `Dockerfile` and `.dockerignore` for Space builds.
 
 ## 3) Add Space metadata in README.md
 

@@ -1,5 +1,4 @@
 from io import BytesIO
-import logging
 import re
 
 from PIL import Image
@@ -17,9 +16,6 @@ from services.groq_service import (
 )
 from services.knowledge_base_service import KnowledgeBaseError, get_recommendations_for_disease
 from services.ml_service import MLServiceError, get_model_name_for_task, run_routed_image_analysis
-
-
-logger = logging.getLogger(__name__)
 
 
 def _clip_probability(value: float) -> float:
@@ -1132,16 +1128,6 @@ async def run_multimodal_pipeline(image_bytes: bytes | None, symptoms: str | Non
     if _is_healthy_or_no_disease(display_condition):
         display_condition = _friendly_healthy_label(display_condition)
         risk_level = "low"
-
-    logger.info(
-        "multimodal.analyze routed_task=%s model_name=%s fallback_used=%s has_image=%s has_symptoms=%s confidence=%.3f",
-        routed_task or "none",
-        _model_name or "none",
-        fallback_used,
-        has_image,
-        has_symptom_text,
-        float(confidence),
-    )
 
     return {
         "response_type": "analysis",

@@ -1,0 +1,124 @@
+{
+  "fracture": {
+    "first_line_drugs": [
+      "acetaminophen (adult oral, standard dosing)",
+      "ibuprofen (adult oral, short-course if no renal/GI contraindication)"
+    ],
+    "alternative_drugs": [
+      "naproxen (adult oral, short-course if NSAID-appropriate)"
+    ],
+    "avoid_or_caution": [
+      "avoid prolonged NSAIDs in CKD, active GI ulcer, anticoagulated/high-bleeding-risk patients"
+    ],
+    "procedures": [
+      "immobilization",
+      "cast/splint planning",
+      "orthopedic review"
+    ],
+    "tests": [
+      "plain radiograph",
+      "CT if occult/complex fracture suspected"
+    ],
+    "guideline_sources": [
+      "NICE fracture management guidance",
+      "AAOS fracture care guidance",
+      "WHO analgesic ladder (supportive analgesia principle)"
+    ]
+  },
+  "tumor": {
+    "first_line_drugs": [
+      "ondansetron (symptom control)",
+      "dexamethasone (only with specialist/oncology indication)"
+    ],
+    "alternative_drugs": [],
+    "avoid_or_caution": [
+      "avoid empiric anti-cancer drug initiation outside oncology protocol"
+    ],
+    "procedures": [
+      "oncology consultation",
+      "biopsy planning",
+      "multidisciplinary tumor board review"
+    ],
+    "tests": [
+      "contrast-enhanced CT or MRI by site",
+      "histopathology/cytology",
+      "staging workup as indicated"
+    ],
+    "guideline_sources": [
+      "NCCN oncology principles",
+      "ESMO clinical practice guidance",
+      "WHO cancer management principles"
+    ]
+  },
+  "kidney_stone": {
+    "first_line_drugs": [
+      "ibuprofen (adult oral, first-line analgesia when NSAID-appropriate)",
+      "tamsulosin (selected distal ureteric stones per local protocol)"
+    ],
+    "alternative_drugs": [
+      "acetaminophen (if NSAID unsuitable)",
+      "diclofenac (short-course, protocol-dependent)"
+    ],
+    "avoid_or_caution": [
+      "avoid NSAIDs in advanced CKD, severe dehydration, or high GI-bleed risk"
+    ],
+    "procedures": [
+      "hydration strategy",
+      "urology review",
+      "lithotripsy/URS assessment if indicated"
+    ],
+    "tests": [
+      "urinalysis",
+      "renal function panel",
+      "non-contrast CT KUB or renal ultrasound"
+    ],
+    "guideline_sources": [
+      "EAU urolithiasis guidance",
+      "AUA stone disease guidance",
+      "NICE renal colic recommendations"
+    ]
+  },
+  "skin_condition": {
+    "first_line_drugs": [
+      "cetirizine (pruritus symptom control)",
+      "hydrocortisone 1% topical (short course for mild inflammatory lesions)"
+    ],
+    "alternative_drugs": [
+      "emollient barrier therapy"
+    ],
+    "avoid_or_caution": [
+      "avoid prolonged topical steroid use without diagnosis confirmation"
+    ],
+    "procedures": [
+      "dermatology review if persistent/atypical",
+      "lesion documentation and serial comparison"
+    ],
+    "tests": [
+      "dermoscopy",
+      "KOH scraping or biopsy when indicated"
+    ],
+    "guideline_sources": [
+      "AAD dermatology guidance",
+      "NICE skin condition pathways"
+    ]
+  },
+  "general_non_specific_finding": {
+    "first_line_drugs": [],
+    "alternative_drugs": [],
+    "avoid_or_caution": [
+      "no routine drug recommendation without clearer syndrome-level diagnosis"
+    ],
+    "procedures": [
+      "clinical reassessment",
+      "specialist referral based on evolving findings"
+    ],
+    "tests": [
+      "targeted diagnostics guided by differential",
+      "baseline laboratory panel as indicated"
+    ],
+    "guideline_sources": [
+      "NICE diagnostic stewardship principles",
+      "WHO patient safety and rational medicine use principles"
+    ]
+  }
+}
