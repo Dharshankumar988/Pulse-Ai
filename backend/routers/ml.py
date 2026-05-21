@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 
 from dependencies.auth import require_approved_doctor_or_admin
 from models.ml_models import MLInferenceResponse, MLTask
@@ -33,7 +34,7 @@ async def predict(
 
     try:
         image_bytes = await file.read()
-        return run_ml_inference(task, image_bytes, confidence=confidence, top_k=top_k)
+        return await run_in_threadpool(run_ml_inference, task, image_bytes, confidence, top_k)
     except MLServiceError as exc:
         return build_error_response(task, str(exc))
     except Exception as exc:
