@@ -30,4 +30,4 @@ This Space deploys the FastAPI backend from the `backend/` folder in this reposi
 - `DEBUG=false`
 - `APP_NAME=Pulse API`
 - `SUPABASE_STORAGE_BUCKET=medical-records`
-- `CORS_ORIGINS=https://YOUR_VERCEL_DOMAIN,https://YOUR_CUSTOM_DOMAIN`
+- `CORS_ORIGINS=*`

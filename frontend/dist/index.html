@@ -8,10 +8,27 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+    <script>
+      (() => {
+        const hfSpaceApiBase = 'https://dharshankumar988-pulse-ai.hf.space/api/v1';
+        const storedApiBase = window.localStorage?.getItem('pulseApiBaseUrl')?.trim() || '';
+        const apiBase = storedApiBase || hfSpaceApiBase;
+        window.__API_BASE_URL__ = apiBase;
+
+        try {
+          if (!storedApiBase || storedApiBase.includes('onrender.com')) {
+            window.localStorage?.setItem('pulseApiBaseUrl', apiBase);
+          }
+        } catch {
+          // Ignore storage failures and keep the in-memory override.
+        }
+      })();
+    </script>
     <script type="module" crossorigin src="/assets/index-Bd0LyrwN.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-BOfNFdhx.css">
   </head>
   <body class="antialiased">
-    <div id="root"></div>
+    <div id="root"></div>
+
   </body>
 </html>
