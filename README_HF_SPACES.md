@@ -1,6 +1,6 @@
 # Deploy Pulse Backend on Hugging Face Spaces (Docker)
 
-This guide deploys the backend from this `backend/` folder to Hugging Face Spaces and connects your existing Vercel frontend.
+This guide deploys the backend from this repository to Hugging Face Spaces with no Render dependency.
 
 ## 1) Create the Space
 
@@ -10,7 +10,9 @@ This guide deploys the backend from this `backend/` folder to Hugging Face Space
 4. Choose visibility (Public or Private).
 5. Click **Create Space**.
 
-## 2) Push backend folder contents to the Space repo root
+## 2) Push this repository to the Space
+
+This repository already contains a root-level Docker setup for Hugging Face Spaces. Push the repo as-is.
 
 Your Space repo root should contain files like:
 
@@ -59,11 +61,7 @@ Open **Space -> Settings -> Variables and secrets** and add:
 - `DEBUG=false`
 - `APP_NAME=Pulse API`
 - `SUPABASE_STORAGE_BUCKET=medical-records`
-- `CORS_ORIGINS=https://YOUR_VERCEL_DOMAIN`
-
-If you use multiple origins, separate them with commas:
-
-`CORS_ORIGINS=https://your-app.vercel.app,https://your-custom-domain.com`
+- `CORS_ORIGINS=*`
 
 ## 5) Deploy
 
@@ -73,19 +71,11 @@ If you use multiple origins, separate them with commas:
    - `https://<your-space>.hf.space/`
    - `https://<your-space>.hf.space/api/v1/health`
 
-## 6) Connect your Vercel frontend
+## 6) Validate the Space directly
 
-In Vercel project settings, add/update:
-
-- `VITE_API_BASE_URL=https://<your-space>.hf.space`
-
-Then redeploy frontend.
-
-## 7) Validate full system
-
-1. Open frontend in Vercel.
-2. Login and call a protected endpoint.
-3. Verify browser network requests go to `https://<your-space>.hf.space/api/v1/...`.
+1. Open `https://<your-space>.hf.space/`.
+2. Check `https://<your-space>.hf.space/api/v1/health`.
+3. If you use the bundled frontend shell, it should call `https://<your-space>.hf.space/api/v1/...` by default.
 4. Confirm no CORS errors in browser console.
 
 ## Notes for free tier
