@@ -10,7 +10,9 @@ pinned: false
 
 # Pulse AI Backend (Hugging Face Space)
 
-This Space deploys the FastAPI backend from the `backend/` folder in this repository.
+Pulse AI is an advanced, AI-powered medical platform designed to assist in medical imaging analysis and patient management.
+
+This Space automatically deploys the FastAPI backend container directly from the GitHub repository, running the models on Hugging Face infrastructure.
 
 ## Health endpoints
 
