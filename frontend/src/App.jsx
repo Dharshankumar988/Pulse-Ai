@@ -26,16 +26,14 @@ const navItems = [
 
 function Shell() {
   const { user, isAdmin, logout } = useAuth();
-  const searchParams = new URLSearchParams(window.location.search);
-  const [tab, setTab] = useState(() => searchParams.get('tab') || 'dashboard');
+  const [tab, setTab] = useState('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showAccessPolicy, setShowAccessPolicy] = useState(false);
 
-  // Show access-policy popup once per login session, unless skipped
+  // Show access-policy popup once per login session
   useEffect(() => {
     const dismissed = sessionStorage.getItem('pulseAccessPolicyDismissed');
-    const skipPopup = searchParams.get('skipPopup') === 'true';
-    if (!dismissed && !skipPopup) setShowAccessPolicy(true);
+    if (!dismissed) setShowAccessPolicy(true);
   }, []);
 
   const dismissPolicy = () => {
