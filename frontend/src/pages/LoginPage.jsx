@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../AuthContext';
 import { api } from '../api';
 import { Input, Btn, StatusMsg } from '../components/ui';
@@ -6,9 +6,10 @@ import { Activity, LogIn, UserPlus, CheckCircle, Eye, EyeOff } from 'lucide-reac
 
 export default function LoginPage() {
   const { login } = useAuth();
+  const searchParams = new URLSearchParams(window.location.search);
   const [mode, setMode] = useState('login'); // 'login' | 'register' | 'registered'
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState(searchParams.get('email') || '');
+  const [password, setPassword] = useState(searchParams.get('password') || '');
   const [fullName, setFullName] = useState('');
   const [role, setRole] = useState('doctor'); // 'doctor' | 'admin'
   const [specialty, setSpecialty] = useState('');
@@ -16,6 +17,32 @@ export default function LoginPage() {
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    if (searchParams.get('email') && searchParams.get('password')) {
+      // Auto trigger login if credentials are in URL
+      const autoLogin = async () => {
+        setLoading(true);
+        setStatus('');
+        try {
+          const res = await api('/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              email: searchParams.get('email'), 
+              password: searchParams.get('password') 
+            }),
+          }, false);
+          login(res.access_token, res.user);
+        } catch (err) {
+          setStatus(err.message);
+        } finally {
+          setLoading(false);
+        }
+      };
+      autoLogin();
+    }
+  }, []); // eslint-disable-line
 
   const handleLogin = async () => {
     setLoading(true);
